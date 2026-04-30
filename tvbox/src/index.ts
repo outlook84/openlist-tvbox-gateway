@@ -14,7 +14,8 @@ declare const local:
 let gateway = "";
 let siteBase = "";
 let storageRule = "openlist_tvbox";
-let sessionCode = "";
+let storageScope = "openlist_tvbox";
+const sessionCodes: Record<string, string> = {};
 
 const AUTH_ID = "__openlist_auth__";
 const REFRESH_ID = "__refresh__";
@@ -36,6 +37,15 @@ function siteBaseFromGateway(value: string): string {
   return value.replace(/\/s\/[^/]+$/, "");
 }
 
+function storageScopeFromGateway(value: string): string {
+  const scoped = value.replace(/^https?:\/\//, "").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  return scoped ? `openlist_tvbox_${scoped}` : "openlist_tvbox";
+}
+
+function accessCodeKey(): string {
+  return `${ACCESS_CODE_KEY}:${storageScope}`;
+}
+
 function queryString(params: Record<string, string> = {}): string {
   const parts: string[] = [];
   for (const key of Object.keys(params)) {
@@ -47,10 +57,11 @@ function queryString(params: Record<string, string> = {}): string {
 }
 
 function getStoredCode(): string {
-  if (sessionCode) return sessionCode;
+  const key = accessCodeKey();
+  if (sessionCodes[key]) return sessionCodes[key];
   try {
     if (typeof local !== "undefined" && local && typeof local.get === "function") {
-      return String(local.get(storageRule, ACCESS_CODE_KEY) || "");
+      return String(local.get(storageRule, key) || "");
     }
   } catch {
     return "";
@@ -59,10 +70,11 @@ function getStoredCode(): string {
 }
 
 function setStoredCode(code: string): void {
-  sessionCode = code;
+  const key = accessCodeKey();
+  sessionCodes[key] = code;
   try {
     if (typeof local !== "undefined" && local && typeof local.set === "function") {
-      local.set(storageRule, ACCESS_CODE_KEY, code);
+      local.set(storageRule, key, code);
     }
   } catch {
     // Storage is a convenience, not a correctness dependency.
@@ -70,10 +82,11 @@ function setStoredCode(code: string): void {
 }
 
 function clearStoredCode(): void {
-  sessionCode = "";
+  const key = accessCodeKey();
+  delete sessionCodes[key];
   try {
     if (typeof local !== "undefined" && local && typeof local.delete === "function") {
-      local.delete(storageRule, ACCESS_CODE_KEY);
+      local.delete(storageRule, key);
     }
   } catch {
     // Ignore storage failures.
@@ -312,11 +325,10 @@ function requestOrAuth(path: string, params: Record<string, string>): string {
 
 const spider = {
   init(ext: string | Json) {
-    const maybeKey = resolveStorageRuleInput(ext);
-    if (maybeKey) storageRule = maybeKey;
-    sessionCode = "";
     gateway = normalizeBaseURL(resolveGatewayInput(ext));
     siteBase = siteBaseFromGateway(gateway);
+    storageScope = resolveStorageRuleInput(ext) || storageScopeFromGateway(gateway);
+    storageRule = storageScope;
   },
 
   home(_filter?: boolean) {

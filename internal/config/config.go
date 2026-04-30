@@ -135,6 +135,7 @@ func (c *Config) Validate() error {
 	}
 	subIDs := map[string]struct{}{}
 	subPaths := map[string]struct{}{}
+	subSiteKeys := map[string]struct{}{}
 	for i := range c.Subs {
 		sub := &c.Subs[i]
 		if sub.ID == "" {
@@ -172,14 +173,26 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("sub %q access_code_hash must be a valid bcrypt hash", sub.ID)
 			}
 		}
-		sub.TVBox.SiteKey = sub.SiteKey
-		sub.TVBox.SiteName = sub.SiteName
+		explicitSubSiteKey := strings.TrimSpace(sub.SiteKey) != "" || strings.TrimSpace(sub.TVBox.SiteKey) != ""
+		if strings.TrimSpace(sub.SiteKey) != "" {
+			sub.TVBox.SiteKey = sub.SiteKey
+		}
+		if strings.TrimSpace(sub.SiteName) != "" {
+			sub.TVBox.SiteName = sub.SiteName
+		}
 		sub.TVBox = mergeTVBox(c.TVBox, sub.TVBox)
+		if !explicitSubSiteKey {
+			sub.TVBox.SiteKey = defaultSubSiteKey(c.TVBox.SiteKey, sub.ID)
+		}
 		sub.SiteKey = sub.TVBox.SiteKey
 		sub.SiteName = sub.TVBox.SiteName
 		if !validID(sub.TVBox.SiteKey) {
 			return fmt.Errorf("sub %q site_key must contain only letters, digits, underscore or dash", sub.ID)
 		}
+		if _, ok := subSiteKeys[sub.TVBox.SiteKey]; ok {
+			return fmt.Errorf("duplicate sub site_key %q", sub.TVBox.SiteKey)
+		}
+		subSiteKeys[sub.TVBox.SiteKey] = struct{}{}
 		if len(sub.Mounts) == 0 {
 			return fmt.Errorf("sub %q requires at least one mount", sub.ID)
 		}
@@ -315,6 +328,13 @@ func mergeTVBox(base, override TVBox) TVBox {
 		override.Changeable = base.Changeable
 	}
 	return normalizeTVBox(override)
+}
+
+func defaultSubSiteKey(baseKey, subID string) string {
+	if subID == "default" {
+		return baseKey
+	}
+	return baseKey + "_" + subID
 }
 
 func CleanMountRoot(path string) (string, error) {

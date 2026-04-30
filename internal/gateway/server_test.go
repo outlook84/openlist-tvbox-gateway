@@ -45,8 +45,24 @@ func TestConfiguredSubPathReturnsScopedSubscription(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	if body := rec.Body.String(); !strings.Contains(body, `"key":"shows_key"`) || !strings.Contains(body, `http://gateway.example.com/s/shows`) {
-		t.Fatalf("unexpected subscription: %s", body)
+	var got struct {
+		Sites []struct {
+			Key string `json:"key"`
+			Ext string `json:"ext"`
+		} `json:"sites"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sites) != 1 || !strings.HasPrefix(got.Sites[0].Key, "shows_key_u") {
+		t.Fatalf("unexpected subscription: %s", rec.Body.String())
+	}
+	var ext map[string]string
+	if err := json.Unmarshal([]byte(got.Sites[0].Ext), &ext); err != nil {
+		t.Fatal(err)
+	}
+	if ext["gateway"] != "http://gateway.example.com/s/shows" || !strings.HasPrefix(ext["skey"], "openlist_tvbox_shows_u") {
+		t.Fatalf("unexpected subscription ext: %#v", ext)
 	}
 }
 

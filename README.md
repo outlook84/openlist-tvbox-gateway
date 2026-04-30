@@ -1,4 +1,4 @@
-# openlist-tvbox
+# openlist-tvbox-gateway
 
 ![openlist-tvbox screenshot](screenshot.png)
 
@@ -62,7 +62,7 @@ docker run -d \
   --name openlist-tvbox \
   -p 18989:18989 \
   -v /path/to/config.yaml:/config/config.yaml:ro \
-  ghcr.io/outlook84/openlist-tvbox:latest
+  ghcr.io/outlook84/openlist-tvbox-gateway:latest
 ```
 
 ## 接入 TVBox

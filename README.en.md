@@ -1,4 +1,4 @@
-# openlist-tvbox
+# openlist-tvbox-gateway
 
 `openlist-tvbox` is a read-only OpenList / AList gateway for TVBox / CatVodSpider.
 
@@ -57,7 +57,7 @@ Example:
 
 ```bash
 docker run -d \
-  --name openlist-tvbox \
+  --name openlist-tvbox-gateway \
   -p 18989:18989 \
   -v /path/to/config.yaml:/config/config.yaml:ro \
   ghcr.io/outlook84/openlist-tvbox:latest

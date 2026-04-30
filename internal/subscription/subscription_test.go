@@ -1,6 +1,7 @@
 package subscription
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http/httptest"
 	"strings"
@@ -39,7 +40,7 @@ func TestBuildSubscriptionDoesNotLeakBackendSecrets(t *testing.T) {
 	if ext["gateway"] != "http://gateway.example.com/s/default" {
 		t.Fatalf("site ext gateway = %q", ext["gateway"])
 	}
-	if ext["skey"] != "openlist_tvbox_default" {
+	if !strings.HasPrefix(ext["skey"], "openlist_tvbox_default_u") {
 		t.Fatalf("site ext skey = %q", ext["skey"])
 	}
 }
@@ -64,7 +65,7 @@ func TestBuildForSubUsesSubTVBoxAndScopedGateway(t *testing.T) {
 		t.Fatalf("sites = %#v", got.Sites)
 	}
 	site := got.Sites[0]
-	if site.Key != "movies_key" || site.Name != "Movies" {
+	if !strings.HasPrefix(site.Key, "movies_key_u") || site.Name != "Movies" {
 		t.Fatalf("site = %#v", site)
 	}
 	if !strings.Contains(site.Ext, "http://gateway.example.com/s/movies") {
@@ -74,7 +75,7 @@ func TestBuildForSubUsesSubTVBoxAndScopedGateway(t *testing.T) {
 	if err := json.Unmarshal([]byte(site.Ext), &ext); err != nil {
 		t.Fatalf("site ext is not json: %v", err)
 	}
-	if ext["gateway"] != "http://gateway.example.com/s/movies" || ext["skey"] != "openlist_tvbox_movies" {
+	if ext["gateway"] != "http://gateway.example.com/s/movies" || !strings.HasPrefix(ext["skey"], "openlist_tvbox_movies_u") {
 		t.Fatalf("site ext = %#v", ext)
 	}
 }
@@ -94,7 +95,7 @@ func TestBuildAlwaysEmitsFilterable(t *testing.T) {
 	}
 }
 
-func TestBuildForSubUsesDistinctStorageKeys(t *testing.T) {
+func TestBuildForSubUsesDistinctSiteAndStorageKeys(t *testing.T) {
 	cfg := &config.Config{
 		PublicBaseURL: "http://gateway.example.com",
 		Backends:      []config.Backend{{ID: "b1", Server: "https://openlist.example.com"}},
@@ -119,6 +120,59 @@ func TestBuildForSubUsesDistinctStorageKeys(t *testing.T) {
 	}
 	if movieExt["skey"] == "" || showExt["skey"] == "" || movieExt["skey"] == showExt["skey"] {
 		t.Fatalf("storage keys are not distinct: movies=%q shows=%q", movieExt["skey"], showExt["skey"])
+	}
+	if movies.Sites[0].Key == "" || shows.Sites[0].Key == "" || movies.Sites[0].Key == shows.Sites[0].Key {
+		t.Fatalf("site keys are not distinct: movies=%q shows=%q", movies.Sites[0].Key, shows.Sites[0].Key)
+	}
+}
+
+func TestBuildForSubScopesIdentityKeysByBaseURL(t *testing.T) {
+	cfgA := &config.Config{
+		PublicBaseURL: "http://gateway-a.example.com",
+		Backends:      []config.Backend{{ID: "b1", Server: "https://openlist.example.com"}},
+		Subs:          []config.Subscription{{ID: "movies", SiteKey: "same_key", Mounts: []config.Mount{{ID: "m", Backend: "b1", Path: "/Movies"}}}},
+	}
+	cfgB := &config.Config{
+		PublicBaseURL: "http://gateway-b.example.com",
+		Backends:      []config.Backend{{ID: "b1", Server: "https://openlist.example.com"}},
+		Subs:          []config.Subscription{{ID: "movies", SiteKey: "same_key", Mounts: []config.Mount{{ID: "m", Backend: "b1", Path: "/Movies"}}}},
+	}
+	if err := cfgA.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfgB.Validate(); err != nil {
+		t.Fatal(err)
+	}
+
+	subA := BuildForSub(cfgA, cfgA.Subs[0], httptest.NewRequest("GET", "http://ignored/sub/movies", nil))
+	subB := BuildForSub(cfgB, cfgB.Subs[0], httptest.NewRequest("GET", "http://ignored/sub/movies", nil))
+	if subA.Sites[0].Key == subB.Sites[0].Key {
+		t.Fatalf("site keys collide across hosts: %q", subA.Sites[0].Key)
+	}
+	var extA, extB map[string]string
+	if err := json.Unmarshal([]byte(subA.Sites[0].Ext), &extA); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(subB.Sites[0].Ext), &extB); err != nil {
+		t.Fatal(err)
+	}
+	if extA["skey"] == extB["skey"] {
+		t.Fatalf("storage keys collide across hosts: %q", extA["skey"])
+	}
+}
+
+func TestScopedIdentityKeyIncludesFullBaseURLScope(t *testing.T) {
+	got := scopedIdentityKey("openlist_tvbox_movies", "HTTPS://Gateway.Example.Com/")
+	const prefix = "openlist_tvbox_movies_u"
+	if !strings.HasPrefix(got, prefix) {
+		t.Fatalf("scoped key = %q", got)
+	}
+	scope, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(got, prefix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(scope) != "https://gateway.example.com" {
+		t.Fatalf("scope = %q", scope)
 	}
 }
 

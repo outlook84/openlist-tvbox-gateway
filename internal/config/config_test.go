@@ -128,12 +128,12 @@ subs:
 	if cfg.Subs[0].TVBox.SiteKey != "movies" || cfg.Subs[0].TVBox.SiteName != "Movies" {
 		t.Fatalf("sub tvbox identity = %#v", cfg.Subs[0].TVBox)
 	}
-	if cfg.Subs[1].TVBox.SiteKey != "openlist_tvbox" || cfg.Subs[1].TVBox.SiteName != "OpenList" {
+	if cfg.Subs[1].TVBox.SiteKey != "openlist_tvbox_shows" || cfg.Subs[1].TVBox.SiteName != "OpenList" {
 		t.Fatalf("sub inherited tvbox identity = %#v", cfg.Subs[1].TVBox)
 	}
 }
 
-func TestSubTVBoxOverridesGlobalOptions(t *testing.T) {
+func TestSubTVBoxDefaultsSiteKeyFromSubID(t *testing.T) {
 	cfg := Config{
 		TVBox:    TVBox{SiteKey: "global_key", SiteName: "Global", Timeout: 20},
 		Backends: []Backend{{ID: "b1", Server: "https://example.com"}},
@@ -146,11 +146,60 @@ func TestSubTVBoxOverridesGlobalOptions(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Subs[0].TVBox.SiteKey != "global_key" || cfg.Subs[0].TVBox.SiteName != "Global" {
+	if cfg.Subs[0].TVBox.SiteKey != "global_key_movies" || cfg.Subs[0].TVBox.SiteName != "Global" {
 		t.Fatalf("sub identity = %#v", cfg.Subs[0].TVBox)
 	}
 	if cfg.Subs[0].TVBox.Timeout != 30 {
 		t.Fatalf("sub timeout = %d", cfg.Subs[0].TVBox.Timeout)
+	}
+}
+
+func TestSubTVBoxAllowsExplicitSiteKey(t *testing.T) {
+	cfg := Config{
+		TVBox:    TVBox{SiteKey: "global_key", SiteName: "Global"},
+		Backends: []Backend{{ID: "b1", Server: "https://example.com"}},
+		Subs: []Subscription{{
+			ID:     "movies",
+			SiteKey: "custom_key",
+			Mounts: []Mount{{ID: "m1", Backend: "b1", Path: "/"}},
+		}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Subs[0].TVBox.SiteKey != "custom_key" {
+		t.Fatalf("site key = %q", cfg.Subs[0].TVBox.SiteKey)
+	}
+}
+
+func TestSubTVBoxAllowsNestedExplicitSiteKey(t *testing.T) {
+	cfg := Config{
+		TVBox:    TVBox{SiteKey: "global_key", SiteName: "Global"},
+		Backends: []Backend{{ID: "b1", Server: "https://example.com"}},
+		Subs: []Subscription{{
+			ID:     "movies",
+			TVBox:  TVBox{SiteKey: "nested_key", SiteName: "Nested"},
+			Mounts: []Mount{{ID: "m1", Backend: "b1", Path: "/"}},
+		}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Subs[0].TVBox.SiteKey != "nested_key" || cfg.Subs[0].TVBox.SiteName != "Nested" {
+		t.Fatalf("sub identity = %#v", cfg.Subs[0].TVBox)
+	}
+}
+
+func TestValidateRejectsDuplicateSubSiteKey(t *testing.T) {
+	cfg := Config{
+		Backends: []Backend{{ID: "b1", Server: "https://example.com"}},
+		Subs: []Subscription{
+			{ID: "movies", SiteKey: "shared", Mounts: []Mount{{ID: "m1", Backend: "b1", Path: "/"}}},
+			{ID: "shows", SiteKey: "shared", Mounts: []Mount{{ID: "m1", Backend: "b1", Path: "/"}}},
+		},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected duplicate sub site_key error")
 	}
 }
 

@@ -1,6 +1,7 @@
 package subscription
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"regexp"
@@ -48,13 +49,15 @@ type siteExt struct {
 func BuildForSub(cfg *config.Config, sub config.Subscription, r *http.Request) Config {
 	base := BaseURL(cfg, r)
 	gateway := base + "/s/" + sub.ID
+	siteKey := scopedIdentityKey(sub.TVBox.SiteKey, base)
+	storageKey := scopedIdentityKey("openlist_tvbox_"+sub.ID, base)
 	ext, _ := json.Marshal(siteExt{
 		Gateway: gateway,
-		SKey:    "openlist_tvbox_" + sub.ID,
+		SKey:    storageKey,
 	})
 	return Config{
 		Sites: []Site{{
-			Key:         sub.TVBox.SiteKey,
+			Key:         siteKey,
 			Name:        sub.TVBox.SiteName,
 			Type:        3,
 			API:         base + SpiderPath(),
@@ -68,6 +71,11 @@ func BuildForSub(cfg *config.Config, sub config.Subscription, r *http.Request) C
 		Parses: []any{},
 		Lives:  []any{},
 	}
+}
+
+func scopedIdentityKey(key, base string) string {
+	scope := strings.ToLower(strings.TrimRight(base, "/"))
+	return key + "_u" + base64.RawURLEncoding.EncodeToString([]byte(scope))
 }
 
 func BaseURL(cfg *config.Config, r *http.Request) string {
