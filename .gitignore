@@ -1,0 +1,11 @@
+node_modules/
+*.exe
+*.test
+coverage/
+.env
+config.json
+config.yaml
+dist
+AGENTS.md
+
+internal/gateway/assets/openlist-tvbox.js

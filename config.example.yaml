@@ -1,0 +1,161 @@
+# TVBox 客户端看到的公开访问地址。
+# 留空时会根据传入请求的 Host/Scheme 自动推导。
+# 当网关位于反向代理、CDN 或 NAT 后面，并且自动推导出的地址
+# 不是 TVBox 应使用的地址时，请设置此项。
+public_base_url: http://127.0.0.1:18989
+
+# 控制访问码冷却计时所使用的客户端身份来源。
+# 默认值：false。直接公网访问时请保持 false。
+# 仅当可信反向代理会覆盖或移除客户端传入的 X-Forwarded-For 头时才启用；
+# 否则客户端可以伪造该请求头来绕过冷却限制。
+trust_x_forwarded_for: false
+
+# subs[].path 生成的 TVBox 订阅条目的默认值。
+# site_key 只能包含字母、数字、下划线或短横线。
+# timeout 单位为秒。小于等于 0 时回退为 15。
+# searchable/quick_search/changeable 使用 TVBox 整数标志：
+#   1 = 启用，0 = 禁用。
+# 省略时的默认值：
+#   site_key: openlist_tvbox
+#   site_name: OpenList
+#   timeout: 15
+#   searchable: 1
+#   quick_search: 0
+#   changeable: 0
+tvbox:
+  site_key: openlist_tvbox
+  site_name: OpenList
+  timeout: 15
+  searchable: 1
+  quick_search: 0
+  changeable: 0
+
+# OpenList / AList 后端定义。
+# 一个 backend 对应一个真实的 OpenList 服务。凭据只保存在服务端，
+# 绝不会输出到 TVBox 订阅、列表响应、播放 ID 或字幕中。
+#
+# id 必须唯一，并且只能包含字母、数字、下划线或短横线。
+# server 必须是绝对 URL。末尾斜杠会自动移除。
+# version 默认是 v3；当前只接受 v3。
+#
+# auth_type 省略时默认为 anonymous。
+# 支持的 auth_type 值：
+#   anonymous: 不允许填写任何凭据字段。
+#   api_key: 必须且只能填写 api_key 或 api_key_env 其中之一。
+#   password: 必须填写 user，并且只能填写 password 或 password_env 其中之一。
+#     网关会自动发送 Client-Id: openlist-tvbox-<backend.id>，
+#     用于兼容 AList v3 的设备/会话机制。
+#
+# 推荐使用 *_env 字段，让密钥从环境变量读取，而不是保存在此文件中。
+backends:
+  - id: main
+    server: https://openlist.example.com
+    auth_type: api_key
+    # api_key 认证会在调用 OpenList 时把该值作为 Authorization 发送。
+    # api_key_env 会在启动时解析，必须指向一个非空环境变量。
+    api_key_env: OPENLIST_MAIN_API_KEY
+    # 简单部署也支持直接填写值，但这会把密钥保存在此文件中。
+    # api_key 和 api_key_env 必须且只能设置其中一个。
+    # api_key: replace-with-server-side-api-key
+
+  - id: backup
+    server: https://backup-openlist.example.com
+    auth_type: password
+    # password 认证会在服务端登录，在内存中缓存 token，
+    # 并在 OpenList 返回 401/403 后重试一次。token 不会持久化保存。
+    user: admin
+    password_env: OPENLIST_BACKUP_PASSWORD
+    # 简单部署也支持直接填写值，但这会把密钥保存在此文件中。
+    # password 和 password_env 必须且只能设置其中一个。
+    # password: replace-with-backend-password
+
+# TVBox 订阅接口。
+# 每一项都会暴露一个独立的订阅 URL。每个订阅拥有自己的 mounts 列表，
+# 因此相同的 mount id 可以出现在不同订阅中。
+#
+# id 为空时默认为 default。
+# id=default 时 path 默认为 /sub，否则默认为 /sub/<id>。
+subs:
+  - id: all
+    path: /sub
+    # 此订阅可选的访问码保护。
+    # 访问码必须是 4 到 12 位数字。明文 access_code 会被拒绝；
+    # 只接受 bcrypt 格式的 access_code_hash。
+    #
+    # 生成方式：
+    #   openlist-tvbox -hash-password 123456
+    #
+    # 同时也接受 htpasswd 和 caddy 生成的 bcrypt 哈希。
+    # access_code_hash: $2a$12$jpEllUPAg/2cQgTLkQAtFeAztfolLH58fj0ldGv6x11yMpPcfBVDm
+
+    # 可选的单订阅 TVBox 身份信息。省略时继承 tvbox 中的值。
+    # site_key 只能包含字母、数字、下划线或短横线。
+    site_key: openlist_tvbox
+    site_name: OpenList
+    # 也可以为此订阅覆盖 TVBox 标志：
+    # tvbox:
+    #   timeout: 20
+    #   searchable: 1
+    #   quick_search: 0
+    #   changeable: 0
+
+    # 挂载项是 TVBox 可见的分类和路径根。
+    # TVBox 只能看到 mount id 和挂载后的路径；它永远不会收到 backend id、
+    # backend 服务地址、API key、密码或登录 token。
+    mounts:
+      - id: movies
+        # TVBox 中显示的名称。省略时默认使用 id。
+        name: 电影
+        # 引用 backends[].id。
+        backend: main
+        # 暴露为此挂载根的后端路径。为空时默认为 /。
+        # 路径会被规范化，并且不能包含 ..、反斜杠或 NUL 字节。
+        path: /Movies
+
+        # 可选的 OpenList 目录密码。
+        # 键是真实后端路径，且必须位于此挂载下；不是 TVBox 显示路径。
+        # 会使用最长匹配路径前缀。不需要时请省略 params。
+        params:
+          /Movies/Private: replace-with-directory-password
+
+        # 可选的播放请求头，只会返回给 TVBox 用于媒体播放。
+        # 网关调用 OpenList API 时不会发送这些请求头。
+        # Authorization 和 Cookie 等敏感请求头会被拒绝，
+        # 因为播放请求头对 TVBox 可见。
+        # 内置域名规则也可能添加请求头；此处同名值会覆盖内置值。
+        play_headers:
+          User-Agent: Mozilla/5.0
+          Referer: https://example.com/
+
+        # 此挂载是否参与聚合搜索。
+        # 默认值：true。分类可浏览但不希望被搜索时设为 false。
+        search: true
+
+        # 是否在目录列表中显示“刷新此目录”操作。
+        # 默认值：false。需要后端账号对挂载路径拥有 OpenList/AList 刷新权限。
+        refresh: false
+
+        # 是否从首页分类和聚合搜索中隐藏此挂载。
+        # 默认值：false。
+        hidden: false
+
+      - id: backup_movies
+        name: 备用电影
+        backend: backup
+        path: /Media/Movies
+        search: true
+        refresh: false
+        hidden: false
+
+  - id: shows
+    path: /sub/shows
+    site_key: openlist_shows
+    site_name: OpenList 剧集
+    mounts:
+      - id: shows
+        name: 剧集
+        backend: main
+        path: /Videos/Shows
+        search: true
+        refresh: false
+        hidden: false

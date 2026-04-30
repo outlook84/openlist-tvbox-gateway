@@ -1,0 +1,15 @@
+FROM alpine:latest AS certs
+RUN apk add --no-cache ca-certificates
+
+FROM busybox:1.37
+
+ARG TARGETPLATFORM
+COPY ${TARGETPLATFORM}/openlist-tvbox /usr/bin/openlist-tvbox
+COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+WORKDIR /config
+ENV OPENLIST_TVBOX_CONFIG=config.yaml
+
+EXPOSE 18989
+
+ENTRYPOINT ["/usr/bin/openlist-tvbox"]

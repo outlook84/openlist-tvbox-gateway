@@ -1,0 +1,82 @@
+version: 2
+
+project_name: openlist-tvbox
+
+builds:
+  - id: openlist-tvbox
+    main: ./cmd/openlist-tvbox
+    binary: openlist-tvbox
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X openlist-tvbox/internal/subscription.SpiderFingerprint={{ .Env.SPIDER_FINGERPRINT }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "7"
+    ignore:
+      - goos: darwin
+        goarch: arm
+      - goos: windows
+        goarch: arm
+
+archives:
+  - id: default
+    ids:
+      - openlist-tvbox
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+dockers_v2:
+  - id: openlist-tvbox
+    ids:
+      - openlist-tvbox
+    dockerfile: Dockerfile.goreleaser
+    images:
+      - "{{ .Env.IMAGE_REPOSITORY }}"
+    tags:
+      - "{{ .Tag }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      "org.opencontainers.image.title": "{{ .ProjectName }}"
+      "org.opencontainers.image.description": "OpenList TVBox gateway"
+      "org.opencontainers.image.url": "{{ .GitURL }}"
+      "org.opencontainers.image.source": "{{ .GitURL }}"
+      "org.opencontainers.image.version": "{{ .Version }}"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "org.opencontainers.image.created": "{{ .Date }}"

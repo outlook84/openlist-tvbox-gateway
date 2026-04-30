@@ -1,0 +1,17 @@
+{
+  "name": "openlist-tvbox-spider",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "build:icons": "node scripts/build-icons.mjs",
+    "build": "esbuild ./tvbox/src/index.ts --bundle --format=esm --target=es2020 --outfile=internal/gateway/assets/openlist-tvbox.js",
+    "build:go": "pnpm build && node scripts/build-go.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "lucide-static": "^1.14.0",
+    "typescript": "^5.8.0"
+  }
+}

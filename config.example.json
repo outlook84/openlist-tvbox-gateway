@@ -1,0 +1,45 @@
+{
+  "public_base_url": "http://127.0.0.1:18989",
+  "tvbox": {
+    "site_key": "openlist_tvbox",
+    "site_name": "OpenList",
+    "timeout": 15,
+    "searchable": 1,
+    "quick_search": 0,
+    "changeable": 0
+  },
+  "backends": [
+    {
+      "id": "main",
+      "server": "https://openlist.example.com",
+      "auth_type": "api_key",
+      "api_key": "replace-with-server-side-api-key"
+    }
+  ],
+  "subs": [
+    {
+      "id": "all",
+      "path": "/sub",
+      "site_key": "openlist_tvbox",
+      "site_name": "OpenList",
+      "mounts": [
+        {
+          "id": "movies",
+          "name": "Movies",
+          "backend": "main",
+          "path": "/Movies",
+          "params": {
+            "/Movies/Private": "replace-with-directory-password"
+          },
+          "play_headers": {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://example.com/"
+          },
+          "search": true,
+          "refresh": false,
+          "hidden": false
+        }
+      ]
+    }
+  ]
+}

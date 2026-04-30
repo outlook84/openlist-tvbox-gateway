@@ -1,0 +1,164 @@
+# Public URL seen by TVBox clients.
+# Leave empty to derive it from the incoming request Host/Scheme.
+# Set this when the gateway is behind a reverse proxy, CDN, or NAT and the
+# derived URL is not the URL TVBox should use.
+public_base_url: http://127.0.0.1:18989
+
+# Controls access-code cooldown client identity.
+# Default: false. Keep false for direct public access.
+# Only enable when a trusted reverse proxy overwrites or strips client-supplied
+# X-Forwarded-For headers; otherwise clients can spoof it to bypass cooldown.
+trust_x_forwarded_for: false
+
+# Defaults for TVBox subscription entries emitted by subs[].path.
+# site_key must contain only letters, digits, underscore, or dash.
+# timeout is in seconds. Values <= 0 fall back to 15.
+# searchable/quick_search/changeable use TVBox integer flags:
+#   1 = enabled, 0 = disabled.
+# Defaults when omitted:
+#   site_key: openlist_tvbox
+#   site_name: OpenList
+#   timeout: 15
+#   searchable: 1
+#   quick_search: 0
+#   changeable: 0
+tvbox:
+  site_key: openlist_tvbox
+  site_name: OpenList
+  timeout: 15
+  searchable: 1
+  quick_search: 0
+  changeable: 0
+
+# OpenList / AList backend definitions.
+# A backend is a real OpenList server. Credentials stay server-side and are
+# never emitted to TVBox subscriptions, list responses, play IDs, or subtitles.
+#
+# id must be unique and contain only letters, digits, underscore, or dash.
+# server must be an absolute URL. Trailing slash is trimmed automatically.
+# version defaults to v3; only v3 is accepted.
+#
+# auth_type defaults to anonymous when omitted.
+# Supported auth_type values:
+#   anonymous: no credential fields are allowed.
+#   api_key: requires exactly one of api_key or api_key_env.
+#   password: requires user plus exactly one of password or password_env.
+#     The gateway automatically sends Client-Id: openlist-tvbox-<backend.id>
+#     for AList v3 device/session compatibility.
+#
+# Prefer *_env fields so secrets are read from environment variables instead of
+# being stored in this file.
+backends:
+  - id: main
+    server: https://openlist.example.com
+    auth_type: api_key
+    # api_key auth sends this value as Authorization when calling OpenList.
+    # api_key_env is resolved during startup and must point to a non-empty env var.
+    api_key_env: OPENLIST_MAIN_API_KEY
+    # Direct value is also supported for simple deployments, but it stores the
+    # secret in this file. Set exactly one of api_key or api_key_env.
+    # api_key: replace-with-server-side-api-key
+
+  - id: backup
+    server: https://backup-openlist.example.com
+    auth_type: password
+    # password auth logs in server-side, caches the token in memory, and retries
+    # once after OpenList returns 401/403. Tokens are not persisted.
+    user: admin
+    password_env: OPENLIST_BACKUP_PASSWORD
+    # Direct value is also supported for simple deployments, but it stores the
+    # secret in this file. Set exactly one of password or password_env.
+    # password: replace-with-backend-password
+
+# TVBox subscription interfaces.
+# Each item exposes one independent subscription URL. Each subscription owns its
+# own mounts list, so the same mount id may appear in different subscriptions.
+#
+# id defaults to default when empty.
+# path defaults to /sub for id=default, otherwise /sub/<id>.
+subs:
+  - id: all
+    path: /sub
+    # Optional access-code protection for this subscription.
+    # Codes must be 4 to 12 digits. Plaintext access_code is rejected; only
+    # bcrypt access_code_hash is accepted.
+    #
+    # Generate:
+    #   openlist-tvbox -hash-password 123456
+    #
+    # htpasswd and caddy bcrypt hashes are also accepted.
+    # access_code_hash: $2a$12$jpEllUPAg/2cQgTLkQAtFeAztfolLH58fj0ldGv6x11yMpPcfBVDm
+
+    # Optional per-sub TVBox identity. When omitted, values inherit from tvbox.
+    # site_key must contain only letters, digits, underscore, or dash.
+    site_key: openlist_tvbox
+    site_name: OpenList
+    # You can also override TVBox flags for this subscription with:
+    # tvbox:
+    #   timeout: 20
+    #   searchable: 1
+    #   quick_search: 0
+    #   changeable: 0
+
+    # Mounts are the categories and path roots visible to TVBox.
+    # TVBox only sees mount ids and mounted paths; it never receives backend ids,
+    # backend server URLs, API keys, passwords, or login tokens.
+    mounts:
+      - id: movies
+        # Display name in TVBox. Defaults to id when omitted.
+        name: Movies
+        # References backends[].id.
+        backend: main
+        # Backend path exposed as this mount root. Defaults to / when empty.
+        # Paths are normalized and may not contain .., backslashes, or NUL bytes.
+        path: /Movies
+
+        # Optional OpenList directory passwords.
+        # Keys are real backend paths under this mount, not TVBox display paths.
+        # The longest matching path prefix wins. Omit params when not needed.
+        params:
+          /Movies/Private: replace-with-directory-password
+
+        # Optional playback headers returned to TVBox for media playback only.
+        # These are not sent when the gateway calls OpenList APIs.
+        # Sensitive headers such as Authorization and Cookie are rejected because
+        # play headers are visible to TVBox.
+        # Built-in domain rules may add headers; values here override same-name
+        # built-in headers.
+        play_headers:
+          User-Agent: Mozilla/5.0
+          Referer: https://example.com/
+
+        # Whether this mount participates in aggregated search.
+        # Default: true. Set false when the category should be browsable but not searched.
+        search: true
+
+        # Shows a "刷新此目录" action in directory listings.
+        # Default: false. Requires the backend account to have OpenList/AList
+        # refresh permission for the mounted path.
+        refresh: false
+
+        # Hides this mount from home categories and aggregated search.
+        # Default: false.
+        hidden: false
+
+      - id: backup_movies
+        name: Backup Movies
+        backend: backup
+        path: /Media/Movies
+        search: true
+        refresh: false
+        hidden: false
+
+  - id: shows
+    path: /sub/shows
+    site_key: openlist_shows
+    site_name: OpenList Shows
+    mounts:
+      - id: shows
+        name: Shows
+        backend: main
+        path: /Videos/Shows
+        search: true
+        refresh: false
+        hidden: false
