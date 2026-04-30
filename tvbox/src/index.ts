@@ -15,7 +15,7 @@ let gateway = "";
 let siteBase = "";
 let storageRule = "openlist_tvbox";
 let storageScope = "openlist_tvbox";
-const sessionCodes: Record<string, string> = {};
+const sessionCodes: Record<string, StoredCode> = {};
 
 const AUTH_ID = "__openlist_auth__";
 const REFRESH_ID = "__refresh__";
@@ -27,6 +27,11 @@ type RequestOptions = {
   headers?: Record<string, string>;
   data?: Json;
   withCode?: boolean;
+};
+
+type StoredCode = {
+  gateway: string;
+  code: string;
 };
 
 function normalizeBaseURL(value: string): string {
@@ -46,6 +51,22 @@ function accessCodeKey(): string {
   return `${ACCESS_CODE_KEY}:${storageScope}`;
 }
 
+function parseStoredCode(value: string): StoredCode | null {
+  try {
+    const parsed = JSON.parse(value) as Json;
+    if (parsed && parsed.gateway === gateway && typeof parsed.code === "string") {
+      return { gateway: String(parsed.gateway), code: parsed.code };
+    }
+  } catch {
+    // Legacy plaintext values are intentionally ignored because they are not gateway-bound.
+  }
+  return null;
+}
+
+function encodeStoredCode(code: string): string {
+  return JSON.stringify({ gateway, code });
+}
+
 function queryString(params: Record<string, string> = {}): string {
   const parts: string[] = [];
   for (const key of Object.keys(params)) {
@@ -58,10 +79,15 @@ function queryString(params: Record<string, string> = {}): string {
 
 function getStoredCode(): string {
   const key = accessCodeKey();
-  if (sessionCodes[key]) return sessionCodes[key];
+  const session = sessionCodes[key];
+  if (session && session.gateway === gateway) return session.code;
   try {
     if (typeof local !== "undefined" && local && typeof local.get === "function") {
-      return String(local.get(storageRule, key) || "");
+      const stored = parseStoredCode(String(local.get(storageRule, key) || ""));
+      if (stored) {
+        sessionCodes[key] = stored;
+        return stored.code;
+      }
     }
   } catch {
     return "";
@@ -71,10 +97,10 @@ function getStoredCode(): string {
 
 function setStoredCode(code: string): void {
   const key = accessCodeKey();
-  sessionCodes[key] = code;
+  sessionCodes[key] = { gateway, code };
   try {
     if (typeof local !== "undefined" && local && typeof local.set === "function") {
-      local.set(storageRule, key, code);
+      local.set(storageRule, key, encodeStoredCode(code));
     }
   } catch {
     // Storage is a convenience, not a correctness dependency.

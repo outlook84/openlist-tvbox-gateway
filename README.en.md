@@ -93,6 +93,8 @@ docker exec openlist-tvbox openlist-tvbox -hash-password 123456
 
 Put the output into `access_code_hash` for the subscription. The access code must be 4 to 12 digits so it can be entered with the TVBox numeric keypad.
 
+Access codes saved by the TVBox client are not automatically removed when a subscription is deleted. To invalidate an old saved code, change the subscription access code or clear the client app data.
+
 ## Configuration
 
 Start from an example config and edit it as needed. The example configs also contain the full field documentation:

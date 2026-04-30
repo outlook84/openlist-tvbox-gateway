@@ -95,6 +95,8 @@ docker exec openlist-tvbox openlist-tvbox -hash-password 123456
 
 然后把输出结果填写到对应订阅的 `access_code_hash`。访问码必须是 4 到 12 位数字，适配 TVBox 侧数字键盘输入。
 
+已在 TVBox 客户端保存的访问码不会随删除订阅自动清除；如需让旧访问码失效，请更换订阅的访问码或清理客户端应用数据。
+
 ## 配置说明
 
 建议从示例配置复制后修改，完整字段说明也在示例配置中：
