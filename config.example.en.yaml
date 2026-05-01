@@ -103,8 +103,7 @@ subs:
     # When set, lives[].url in the subscription points to a gateway proxy URL.
     # The gateway proxies only the live playlist file, not the actual media
     # stream URLs inside that playlist.
-    # Note: access_code_hash protects only the TVBox VOD API. Live proxy URLs
-    # are not access-code protected.
+    # Note: access_code_hash protects only the TVBox VOD API. Live proxy URLs are not access-code protected.
     #
     # Compatibility note: some Box clients enable their local live URL override
     # only when the subscription contains a non-empty lives list. If you want to
