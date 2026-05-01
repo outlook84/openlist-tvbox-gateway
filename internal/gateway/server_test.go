@@ -1,8 +1,11 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -221,6 +224,144 @@ func TestProtectedSubAPIAcceptsAccessCode(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSubscriptionLiveUsesGatewayProxyURL(t *testing.T) {
+	cfg := testGatewayConfig(t)
+	cfg.PublicBaseURL = "http://gateway.example.com"
+	cfg.Subs[1].Lives = []config.Live{{Name: "Live", URL: "https://live.example.com/list.m3u", PlayerType: 2}}
+	handler := NewServer(mount.NewService(cfg, fakeOpenListClient{}, nil), nil)
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.example.com/custom/shows", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "live.example.com") {
+		t.Fatalf("subscription leaked live source URL: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"url":"http://gateway.example.com/s/shows/live/0/list.m3u"`) {
+		t.Fatalf("subscription missing live proxy URL: %s", rec.Body.String())
+	}
+}
+
+func TestLiveProxyFetchesConfiguredLiveListOnly(t *testing.T) {
+	liveServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/list.m3u" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "audio/x-mpegurl")
+		_, _ = w.Write([]byte("#EXTM3U\n#EXTINF:-1,Test\nhttp://stream.example.com/live.m3u8\n"))
+	}))
+	t.Cleanup(liveServer.Close)
+
+	cfg := testGatewayConfig(t)
+	cfg.Subs[1].Lives = []config.Live{{Name: "Live", URL: liveServer.URL + "/list.m3u"}}
+	handler := NewServer(mount.NewService(cfg, fakeOpenListClient{}, nil), nil)
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.example.com/s/shows/live/0/list.m3u", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Content-Type") != "audio/x-mpegurl" {
+		t.Fatalf("content-type = %q", rec.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(rec.Body.String(), "http://stream.example.com/live.m3u8") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestLiveProxyRejectsPlaylistAboveDeclaredSizeLimit(t *testing.T) {
+	liveServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(maxLivePlaylistBodySize+1))
+		_, _ = w.Write([]byte("#EXTM3U\n"))
+	}))
+	t.Cleanup(liveServer.Close)
+
+	cfg := testGatewayConfig(t)
+	cfg.Subs[1].Lives = []config.Live{{Name: "Live", URL: liveServer.URL + "/list.m3u"}}
+	handler := NewServer(mount.NewService(cfg, fakeOpenListClient{}, nil), nil)
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.example.com/s/shows/live/0/list.m3u", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "playlist too large") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestLiveProxyRejectsPlaylistAboveReadSizeLimit(t *testing.T) {
+	liveServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "audio/x-mpegurl")
+		_, _ = io.Copy(w, strings.NewReader(strings.Repeat("x", maxLivePlaylistBodySize+1)))
+	}))
+	t.Cleanup(liveServer.Close)
+
+	cfg := testGatewayConfig(t)
+	cfg.Subs[1].Lives = []config.Live{{Name: "Live", URL: liveServer.URL + "/list.m3u"}}
+	handler := NewServer(mount.NewService(cfg, fakeOpenListClient{}, nil), nil)
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.example.com/s/shows/live/0/list.m3u", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d body length = %d", rec.Code, rec.Body.Len())
+	}
+	if rec.Body.Len() >= maxLivePlaylistBodySize {
+		t.Fatalf("response was truncated success-sized body: length = %d", rec.Body.Len())
+	}
+	if !strings.Contains(rec.Body.String(), "playlist too large") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestLiveProxyRejectsUnknownLiveIndex(t *testing.T) {
+	cfg := testGatewayConfig(t)
+	cfg.Subs[1].Lives = []config.Live{{Name: "Live", URL: "https://live.example.com/list.m3u"}}
+	handler := NewServer(mount.NewService(cfg, fakeOpenListClient{}, nil), nil)
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.example.com/s/shows/live/1/list.m3u", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLiveProxyLogsDoNotLeakConfiguredLiveURL(t *testing.T) {
+	cfg := testGatewayConfig(t)
+	cfg.Subs[1].Lives = []config.Live{{Name: "Live", URL: "http://127.0.0.1:1/list.m3u?token=secret-live-token"}}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	handler := NewServer(mount.NewService(cfg, fakeOpenListClient{}, nil), logger)
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.example.com/s/shows/live/0/list.m3u", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	text := logs.String()
+	for _, forbidden := range []string{"secret-live-token", "token=", "live.example.com", "127.0.0.1:1/list.m3u"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("log leaked %q: %s", forbidden, text)
+		}
+	}
+	if !strings.Contains(text, "reason=\"request failed\"") && !strings.Contains(text, "reason=\"invalid configured url\"") {
+		t.Fatalf("log missing fixed reason: %s", text)
 	}
 }
 

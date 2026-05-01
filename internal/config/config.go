@@ -64,7 +64,18 @@ type Subscription struct {
 	SiteKey        string  `json:"site_key" yaml:"site_key"`
 	SiteName       string  `json:"site_name" yaml:"site_name"`
 	TVBox          TVBox   `json:"tvbox" yaml:"tvbox"`
+	Lives          []Live  `json:"lives" yaml:"lives"`
 	Mounts         []Mount `json:"mounts" yaml:"mounts"`
+}
+
+type Live struct {
+	Name       string `json:"name" yaml:"name"`
+	Type       int    `json:"type" yaml:"type"`
+	URL        string `json:"url" yaml:"url"`
+	PlayerType int    `json:"playerType,omitempty" yaml:"player_type"`
+	EPG        string `json:"epg,omitempty" yaml:"epg"`
+	Logo       string `json:"logo,omitempty" yaml:"logo"`
+	UA         string `json:"ua,omitempty" yaml:"ua"`
 }
 
 func Load(path string) (*Config, error) {
@@ -196,6 +207,9 @@ func (c *Config) Validate() error {
 		if len(sub.Mounts) == 0 {
 			return fmt.Errorf("sub %q requires at least one mount", sub.ID)
 		}
+		if err := validateLives(sub.ID, sub.Lives); err != nil {
+			return err
+		}
 		if err := validateMounts(sub.ID, sub.Mounts, backendIDs); err != nil {
 			return err
 		}
@@ -260,6 +274,41 @@ func normalizeBackendAuth(b *Backend) error {
 		}
 	default:
 		return fmt.Errorf("backend %q auth_type must be one of anonymous, api_key or password", b.ID)
+	}
+	return nil
+}
+
+func validateLives(subID string, lives []Live) error {
+	for i := range lives {
+		live := &lives[i]
+		live.Name = strings.TrimSpace(live.Name)
+		live.URL = strings.TrimSpace(live.URL)
+		live.EPG = strings.TrimSpace(live.EPG)
+		live.Logo = strings.TrimSpace(live.Logo)
+		live.UA = strings.TrimSpace(live.UA)
+		if live.Name == "" {
+			live.Name = "Live"
+		}
+		if live.URL == "" {
+			return fmt.Errorf("sub %q live[%d] url is required", subID, i)
+		}
+		if live.Type != 0 {
+			return fmt.Errorf("sub %q live[%d] type must be 0", subID, i)
+		}
+		u, err := url.Parse(live.URL)
+		if err != nil || u.Scheme == "" || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("sub %q live[%d] url must be an absolute http(s) URL", subID, i)
+		}
+		if live.EPG != "" {
+			if u, err := url.Parse(live.EPG); err != nil || u.Scheme == "" || u.Host == "" {
+				return fmt.Errorf("sub %q live[%d] epg must be an absolute URL", subID, i)
+			}
+		}
+		if live.Logo != "" {
+			if u, err := url.Parse(live.Logo); err != nil || u.Scheme == "" || u.Host == "" {
+				return fmt.Errorf("sub %q live[%d] logo must be an absolute URL", subID, i)
+			}
+		}
 	}
 	return nil
 }

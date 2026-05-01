@@ -191,6 +191,94 @@ func TestBuildDefaultsQuickSearchOff(t *testing.T) {
 	}
 }
 
+func TestBuildOmitsEmptyLives(t *testing.T) {
+	cfg := &config.Config{
+		PublicBaseURL: "http://gateway.example.com",
+		Backends:      []config.Backend{{ID: "b1", Server: "https://openlist.example.com"}},
+		Subs:          []config.Subscription{{Mounts: []config.Mount{{ID: "m", Backend: "b1", Path: "/Movies"}}}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	got := BuildForSub(cfg, cfg.Subs[0], httptest.NewRequest("GET", "http://ignored/sub", nil))
+	data, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"lives":[]`) || strings.Contains(string(data), `"lives"`) {
+		t.Fatalf("empty lives should be omitted: %s", data)
+	}
+}
+
+func TestBuildEmitsConfiguredLives(t *testing.T) {
+	cfg := &config.Config{
+		PublicBaseURL: "http://gateway.example.com",
+		Backends:      []config.Backend{{ID: "b1", Server: "https://openlist.example.com"}},
+		Subs: []config.Subscription{{
+			Lives:  []config.Live{{Name: "Live", URL: "https://live.example.com/iptv.m3u", PlayerType: 2, UA: "Secret-UA-Token"}},
+			Mounts: []config.Mount{{ID: "m", Backend: "b1", Path: "/Movies"}},
+		}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	got := BuildForSub(cfg, cfg.Subs[0], httptest.NewRequest("GET", "http://ignored/sub", nil))
+	if len(got.Lives) != 1 {
+		t.Fatalf("lives = %#v", got.Lives)
+	}
+	if got.Lives[0].Name != "Live" || got.Lives[0].Type != 0 || got.Lives[0].URL != "http://gateway.example.com/s/default/live/0/iptv.m3u" || got.Lives[0].PlayerType != 2 {
+		t.Fatalf("live = %#v", got.Lives[0])
+	}
+	data, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"playerType":2`) || strings.Contains(text, "player_type") {
+		t.Fatalf("live json uses unexpected field names: %s", text)
+	}
+	if strings.Contains(text, "live.example.com") {
+		t.Fatalf("subscription leaked live source URL: %s", text)
+	}
+	if strings.Contains(text, "Secret-UA-Token") || strings.Contains(text, `"ua"`) {
+		t.Fatalf("subscription leaked live source user-agent: %s", text)
+	}
+}
+
+func TestBuildLiveURLDoesNotLeakSourceQuery(t *testing.T) {
+	cfg := &config.Config{
+		PublicBaseURL: "http://gateway.example.com",
+		Backends:      []config.Backend{{ID: "b1", Server: "https://openlist.example.com"}},
+		Subs: []config.Subscription{{
+			Lives: []config.Live{{
+				Name: "Live",
+				URL:  "https://live.example.com/path/iptv list.m3u?token=secret#frag",
+			}},
+			Mounts: []config.Mount{{ID: "m", Backend: "b1", Path: "/Movies"}},
+		}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	got := BuildForSub(cfg, cfg.Subs[0], httptest.NewRequest("GET", "http://ignored/sub", nil))
+	if len(got.Lives) != 1 {
+		t.Fatalf("lives = %#v", got.Lives)
+	}
+	if got.Lives[0].URL != "http://gateway.example.com/s/default/live/0/iptv%20list.m3u" {
+		t.Fatalf("live url = %q", got.Lives[0].URL)
+	}
+	data, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, forbidden := range []string{"live.example.com", "token=secret", "#frag"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("subscription leaked %q: %s", forbidden, text)
+		}
+	}
+}
+
 func TestBuildUsesInjectedSpiderFingerprint(t *testing.T) {
 	original := SpiderFingerprint
 	SpiderFingerprint = "build.abc123"

@@ -4,7 +4,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"openlist-tvbox/internal/config"
@@ -23,9 +26,9 @@ func SpiderPath() string {
 }
 
 type Config struct {
-	Sites  []Site `json:"sites"`
-	Parses []any  `json:"parses"`
-	Lives  []any  `json:"lives"`
+	Sites  []Site        `json:"sites"`
+	Parses []any         `json:"parses"`
+	Lives  []config.Live `json:"lives,omitempty"`
 }
 
 type Site struct {
@@ -55,7 +58,7 @@ func BuildForSub(cfg *config.Config, sub config.Subscription, r *http.Request) C
 		Gateway: gateway,
 		SKey:    storageKey,
 	})
-	return Config{
+	out := Config{
 		Sites: []Site{{
 			Key:         siteKey,
 			Name:        sub.TVBox.SiteName,
@@ -69,8 +72,37 @@ func BuildForSub(cfg *config.Config, sub config.Subscription, r *http.Request) C
 			Timeout:     sub.TVBox.Timeout,
 		}},
 		Parses: []any{},
-		Lives:  []any{},
 	}
+	if len(sub.Lives) > 0 {
+		out.Lives = buildLivesForSub(sub.Lives, gateway)
+	}
+	return out
+}
+
+func buildLivesForSub(lives []config.Live, gateway string) []config.Live {
+	out := make([]config.Live, len(lives))
+	for i, live := range lives {
+		out[i] = live
+		out[i].URL = gateway + "/live/" + strconv.Itoa(i) + "/" + liveProxyName(live.URL)
+		out[i].UA = ""
+	}
+	return out
+}
+
+func liveProxyName(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "live.m3u"
+	}
+	name := path.Base(u.EscapedPath())
+	if name == "." || name == "/" {
+		return "live.m3u"
+	}
+	unescaped, err := url.PathUnescape(name)
+	if err != nil || unescaped == "" {
+		return "live.m3u"
+	}
+	return url.PathEscape(unescaped)
 }
 
 func scopedIdentityKey(key, base string) string {

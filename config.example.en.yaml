@@ -100,6 +100,23 @@ subs:
     #   quick_search: 0
     #   changeable: 0
 
+    # When set, lives[].url in the subscription points to a gateway proxy URL.
+    # The gateway proxies only the live playlist file, not the actual media
+    # stream URLs inside that playlist.
+    # Note: access_code_hash protects only the TVBox VOD API. Live proxy URLs
+    # are not access-code protected.
+    #
+    # Compatibility note: some Box clients enable their local live URL override
+    # only when the subscription contains a non-empty lives list. If you want to
+    # rely only on Box's local live URL, you may configure one valid placeholder
+    # live source here. 
+    # lives:
+    #   - name: Live
+    #     type: 0
+    #     url: https://example.com/iptv.m3u
+    #     epg: https://example.com/epg.xml
+    #     logo: https://example.com/logo/{name}.png
+
     # Mounts are the categories and path roots visible to TVBox.
     # TVBox only sees mount ids and mounted paths; it never receives backend ids,
     # backend server URLs, API keys, passwords, or login tokens.

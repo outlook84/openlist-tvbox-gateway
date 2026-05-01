@@ -22,6 +22,13 @@
       "path": "/sub",
       "site_key": "openlist_tvbox",
       "site_name": "OpenList",
+      "lives": [
+        {
+          "name": "Live",
+          "type": 0,
+          "url": "https://example.com/iptv.m3u"
+        }
+      ],
       "mounts": [
         {
           "id": "movies",
