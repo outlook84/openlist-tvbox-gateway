@@ -51,11 +51,19 @@ func main() {
 
 	client := openlist.NewClient(http.DefaultClient, logger)
 	service := mount.NewService(cfg, client, logger)
+	handler := gateway.NewServer(service, logger)
 	server := &http.Server{
 		Addr:              listen,
-		Handler:           gateway.NewServer(service, logger),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+
+	reloadCtx, stopReload := context.WithCancel(context.Background())
+	defer stopReload()
+	go watchConfig(reloadCtx, configPath, logger, func(cfg *config.Config) {
+		reloadedClient := openlist.NewClient(http.DefaultClient, logger)
+		handler.SetService(mount.NewService(cfg, reloadedClient, logger))
+	})
 
 	go func() {
 		logger.Info("openlist-tvbox listening", "addr", listen)
@@ -68,9 +76,129 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
 	<-stop
+	stopReload()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = server.Shutdown(ctx)
+}
+
+type configFileState struct {
+	modTime time.Time
+	size    int64
+	sum     uint64
+}
+
+func watchConfig(ctx context.Context, configPath string, logger *slog.Logger, apply func(*config.Config)) {
+	watchConfigWithTimings(ctx, configPath, logger, 2*time.Second, 700*time.Millisecond, apply)
+}
+
+func watchConfigWithTimings(ctx context.Context, configPath string, logger *slog.Logger, interval, debounce time.Duration, apply func(*config.Config)) {
+	state, err := statConfigFile(configPath)
+	if err != nil {
+		logger.Warn("config watcher disabled", "error", err)
+		return
+	}
+	absPath, absErr := filepath.Abs(configPath)
+	if absErr != nil {
+		absPath = configPath
+	}
+	logger.Info("config watcher started", "path", absPath)
+
+	reloadRequests := make(chan struct{}, 1)
+	go runConfigReloadWorker(ctx, configPath, absPath, logger, debounce, reloadRequests, apply)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			next, err := statConfigFile(configPath)
+			if err != nil {
+				logger.Warn("config stat failed", "error", err)
+				continue
+			}
+			if next == state {
+				continue
+			}
+			state = next
+			queueConfigReload(reloadRequests)
+		}
+	}
+}
+
+func runConfigReloadWorker(ctx context.Context, configPath, absPath string, logger *slog.Logger, debounce time.Duration, reloadRequests <-chan struct{}, apply func(*config.Config)) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-reloadRequests:
+		}
+		if !waitForConfigDebounce(ctx, debounce, reloadRequests) {
+			return
+		}
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			logger.Error("config reload failed; keeping current config", "error", err)
+			continue
+		}
+		apply(cfg)
+		logger.Info("config reloaded", "path", absPath)
+	}
+}
+
+func waitForConfigDebounce(ctx context.Context, debounce time.Duration, reloadRequests <-chan struct{}) bool {
+	timer := time.NewTimer(debounce)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-reloadRequests:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(debounce)
+		case <-timer.C:
+			return true
+		}
+	}
+}
+
+func queueConfigReload(reloadRequests chan<- struct{}) {
+	select {
+	case reloadRequests <- struct{}{}:
+	default:
+	}
+}
+
+func statConfigFile(path string) (configFileState, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return configFileState{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return configFileState{}, err
+	}
+	return configFileState{modTime: info.ModTime(), size: info.Size(), sum: checksum(data)}, nil
+}
+
+func checksum(data []byte) uint64 {
+	const (
+		offset uint64 = 14695981039346656037
+		prime  uint64 = 1099511628211
+	)
+	sum := offset
+	for _, b := range data {
+		sum ^= uint64(b)
+		sum *= prime
+	}
+	return sum
 }
 
 func getenv(key, fallback string) string {

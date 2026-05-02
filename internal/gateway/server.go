@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"openlist-tvbox/internal/auth"
@@ -43,7 +44,7 @@ var playlistIcon []byte
 var refreshIcon []byte
 
 type Server struct {
-	service      *mount.Service
+	service      atomic.Pointer[mount.Service]
 	logger       *slog.Logger
 	mux          *http.ServeMux
 	httpClient   *http.Client
@@ -64,20 +65,37 @@ const (
 	maxLivePlaylistBodySize = 32 << 20
 )
 
-func NewServer(service *mount.Service, logger *slog.Logger) http.Handler {
+func NewServer(service *mount.Service, logger *slog.Logger) *Server {
 	s := &Server{
-		service:      service,
 		logger:       logger,
 		mux:          http.NewServeMux(),
 		httpClient:   &http.Client{Timeout: 20 * time.Second},
 		authFailures: map[string]authFailure{},
 	}
+	s.SetService(service)
 	s.routes()
 	return s
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	service := s.currentService()
+	r = r.WithContext(context.WithValue(r.Context(), serviceContextKey{}, service))
 	s.mux.ServeHTTP(w, r)
+}
+
+func (s *Server) SetService(service *mount.Service) {
+	s.service.Store(service)
+}
+
+func (s *Server) currentService() *mount.Service {
+	return s.service.Load()
+}
+
+type serviceContextKey struct{}
+
+func serviceFromRequest(r *http.Request) *mount.Service {
+	service, _ := r.Context().Value(serviceContextKey{}).(*mount.Service)
+	return service
 }
 
 func (s *Server) routes() {
@@ -92,8 +110,9 @@ func (s *Server) routes() {
 }
 
 func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
-	if sub, ok := s.subByPath(r.URL.Path); ok {
-		writeJSON(w, http.StatusOK, subscription.BuildForSub(s.service.Config(), sub, r))
+	service := serviceFromRequest(r)
+	if sub, ok := s.subByPath(service, r.URL.Path); ok {
+		writeJSON(w, http.StatusOK, subscription.BuildForSub(service.Config(), sub, r))
 		return
 	}
 	if r.URL.Path == "/sub" {
@@ -104,18 +123,19 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) dynamic(w http.ResponseWriter, r *http.Request) {
-	if sub, ok := s.subByPath(r.URL.Path); ok {
-		writeJSON(w, http.StatusOK, subscription.BuildForSub(s.service.Config(), sub, r))
+	service := serviceFromRequest(r)
+	if sub, ok := s.subByPath(service, r.URL.Path); ok {
+		writeJSON(w, http.StatusOK, subscription.BuildForSub(service.Config(), sub, r))
 		return
 	}
 	if subID, livePath, ok := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/live/"); ok && strings.HasPrefix(subID, "s/") {
-		s.liveForSub(w, r, strings.TrimPrefix(subID, "s/"), livePath)
+		s.liveForSub(service, w, r, strings.TrimPrefix(subID, "s/"), livePath)
 		return
 	}
 	subID, apiPath, ok := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/api/tvbox/")
 	if !ok || !strings.HasPrefix(subID, "s/") {
 		if subID, apiPath, ok := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/api/sub/"); ok && strings.HasPrefix(subID, "s/") && apiPath == "auth" {
-			s.authSubID(w, r, strings.TrimPrefix(subID, "s/"))
+			s.authSubID(service, w, r, strings.TrimPrefix(subID, "s/"))
 			return
 		}
 		http.NotFound(w, r)
@@ -124,31 +144,31 @@ func (s *Server) dynamic(w http.ResponseWriter, r *http.Request) {
 	subID = strings.TrimPrefix(subID, "s/")
 	switch apiPath {
 	case "home":
-		if !s.authorize(w, r, subID) {
+		if !s.authorize(service, w, r, subID) {
 			return
 		}
-		writeJSON(w, http.StatusOK, s.service.HomeForSub(subID))
+		writeJSON(w, http.StatusOK, service.HomeForSub(subID))
 	case "category":
-		s.categoryForSub(w, r, subID)
+		s.categoryForSub(service, w, r, subID)
 	case "detail":
-		s.detailForSub(w, r, subID)
+		s.detailForSub(service, w, r, subID)
 	case "search":
-		s.searchForSub(w, r, subID)
+		s.searchForSub(service, w, r, subID)
 	case "play":
-		s.playForSub(w, r, subID)
+		s.playForSub(service, w, r, subID)
 	case "refresh":
-		s.refreshForSub(w, r, subID)
+		s.refreshForSub(service, w, r, subID)
 	default:
 		http.NotFound(w, r)
 	}
 }
 
-func (s *Server) subByPath(requestPath string) (config.Subscription, bool) {
+func (s *Server) subByPath(service *mount.Service, requestPath string) (config.Subscription, bool) {
 	requestPath = strings.TrimRight(requestPath, "/")
 	if requestPath == "" {
 		requestPath = "/"
 	}
-	for _, sub := range s.service.Config().Subs {
+	for _, sub := range service.Config().Subs {
 		if sub.Path == requestPath {
 			return sub, true
 		}
@@ -197,17 +217,17 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *Server) categoryForSub(w http.ResponseWriter, r *http.Request, subID string) {
-	if !s.authorize(w, r, subID) {
+func (s *Server) categoryForSub(service *mount.Service, w http.ResponseWriter, r *http.Request, subID string) {
+	if !s.authorize(service, w, r, subID) {
 		return
 	}
 	q := r.URL.Query()
-	result, err := s.service.CategoryForSub(r.Context(), subID, q.Get("tid"), q.Get("type"), q.Get("order"))
+	result, err := service.CategoryForSub(r.Context(), subID, q.Get("tid"), q.Get("type"), q.Get("order"))
 	writeResult(w, result, err)
 }
 
-func (s *Server) detailForSub(w http.ResponseWriter, r *http.Request, subID string) {
-	if !s.authorize(w, r, subID) {
+func (s *Server) detailForSub(service *mount.Service, w http.ResponseWriter, r *http.Request, subID string) {
+	if !s.authorize(service, w, r, subID) {
 		return
 	}
 	id := r.URL.Query().Get("id")
@@ -216,36 +236,36 @@ func (s *Server) detailForSub(w http.ResponseWriter, r *http.Request, subID stri
 		id = strings.TrimSuffix(id, "]")
 		id = strings.Trim(id, "\"")
 	}
-	result, err := s.service.DetailForSub(r.Context(), subID, id)
+	result, err := service.DetailForSub(r.Context(), subID, id)
 	writeResult(w, result, err)
 }
 
-func (s *Server) searchForSub(w http.ResponseWriter, r *http.Request, subID string) {
-	if !s.authorize(w, r, subID) {
+func (s *Server) searchForSub(service *mount.Service, w http.ResponseWriter, r *http.Request, subID string) {
+	if !s.authorize(service, w, r, subID) {
 		return
 	}
 	key := r.URL.Query().Get("key")
 	if key == "" {
 		key = r.URL.Query().Get("wd")
 	}
-	result, err := s.service.SearchForSub(r.Context(), subID, key)
+	result, err := service.SearchForSub(r.Context(), subID, key)
 	writeResult(w, result, err)
 }
 
-func (s *Server) playForSub(w http.ResponseWriter, r *http.Request, subID string) {
-	if !s.authorize(w, r, subID) {
+func (s *Server) playForSub(service *mount.Service, w http.ResponseWriter, r *http.Request, subID string) {
+	if !s.authorize(service, w, r, subID) {
 		return
 	}
-	result, err := s.service.PlayForSub(r.Context(), subID, r.URL.Query().Get("id"))
+	result, err := service.PlayForSub(r.Context(), subID, r.URL.Query().Get("id"))
 	writeResult(w, result, err)
 }
 
-func (s *Server) refreshForSub(w http.ResponseWriter, r *http.Request, subID string) {
+func (s *Server) refreshForSub(service *mount.Service, w http.ResponseWriter, r *http.Request, subID string) {
 	if r.Method != http.MethodPost {
 		http.NotFound(w, r)
 		return
 	}
-	if !s.authorize(w, r, subID) {
+	if !s.authorize(service, w, r, subID) {
 		return
 	}
 	id := r.URL.Query().Get("id")
@@ -258,11 +278,11 @@ func (s *Server) refreshForSub(w http.ResponseWriter, r *http.Request, subID str
 		}
 		id = body.ID
 	}
-	result, err := s.service.RefreshForSub(r.Context(), subID, id)
+	result, err := service.RefreshForSub(r.Context(), subID, id)
 	writeResult(w, result, err)
 }
 
-func (s *Server) liveForSub(w http.ResponseWriter, r *http.Request, subID, livePath string) {
+func (s *Server) liveForSub(service *mount.Service, w http.ResponseWriter, r *http.Request, subID, livePath string) {
 	if r.Method != http.MethodGet {
 		http.NotFound(w, r)
 		return
@@ -273,7 +293,7 @@ func (s *Server) liveForSub(w http.ResponseWriter, r *http.Request, subID, liveP
 		http.NotFound(w, r)
 		return
 	}
-	sub, ok := s.subByID(subID)
+	sub, ok := s.subByID(service, subID)
 	if !ok || index >= len(sub.Lives) {
 		http.NotFound(w, r)
 		return
@@ -346,10 +366,10 @@ func (s *Server) authSub(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.authSubID(w, r, subID)
+	s.authSubID(serviceFromRequest(r), w, r, subID)
 }
 
-func (s *Server) authSubID(w http.ResponseWriter, r *http.Request, subID string) {
+func (s *Server) authSubID(service *mount.Service, w http.ResponseWriter, r *http.Request, subID string) {
 	if r.Method != http.MethodPost {
 		http.NotFound(w, r)
 		return
@@ -360,7 +380,7 @@ func (s *Server) authSubID(w http.ResponseWriter, r *http.Request, subID string)
 		return
 	}
 	code := accessCodeFromRequest(r)
-	if s.validCode(subID, code) {
+	if s.validCode(service, subID, code) {
 		s.clearAuthFailure(key)
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
@@ -371,8 +391,8 @@ func (s *Server) authSubID(w http.ResponseWriter, r *http.Request, subID string)
 	writeJSON(w, http.StatusUnauthorized, map[string]bool{"ok": false})
 }
 
-func (s *Server) authorize(w http.ResponseWriter, r *http.Request, subID string) bool {
-	sub, ok := s.subByID(subID)
+func (s *Server) authorize(service *mount.Service, w http.ResponseWriter, r *http.Request, subID string) bool {
+	sub, ok := s.subByID(service, subID)
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, catvod.Result{Error: "unauthorized"})
 		return false
@@ -386,7 +406,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, subID string)
 		return false
 	}
 	code := accessCodeFromRequest(r)
-	if s.validCode(sub.ID, code) {
+	if s.validCode(service, sub.ID, code) {
 		s.clearAuthFailure(key)
 		return true
 	}
@@ -397,8 +417,8 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, subID string)
 	return false
 }
 
-func (s *Server) validCode(subID, code string) bool {
-	sub, ok := s.subByID(subID)
+func (s *Server) validCode(service *mount.Service, subID, code string) bool {
+	sub, ok := s.subByID(service, subID)
 	if !ok || sub.AccessCodeHash == "" || code == "" {
 		return false
 	}
@@ -410,7 +430,7 @@ func (s *Server) validCode(subID, code string) bool {
 
 func (s *Server) authFailureKey(r *http.Request, subID string) string {
 	host := r.RemoteAddr
-	if s.service.Config().TrustXForwardedFor {
+	if serviceFromRequest(r).Config().TrustXForwardedFor {
 		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 			host = strings.TrimSpace(strings.Split(forwarded, ",")[0])
 		}
@@ -466,8 +486,8 @@ func (s *Server) clearAuthFailure(key string) {
 	delete(s.authFailures, key)
 }
 
-func (s *Server) subByID(subID string) (config.Subscription, bool) {
-	for _, sub := range s.service.Config().Subs {
+func (s *Server) subByID(service *mount.Service, subID string) (config.Subscription, bool) {
+	for _, sub := range service.Config().Subs {
 		if sub.ID == subID {
 			return sub, true
 		}

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -156,6 +157,95 @@ func TestScopedAPIUsesSubMounts(t *testing.T) {
 	if len(got.Class) != 1 || got.Class[0].TypeID != "shows" {
 		t.Fatalf("class = %#v", got.Class)
 	}
+}
+
+func TestRequestUsesSingleServiceSnapshotAfterReload(t *testing.T) {
+	client := &swapDuringListClient{started: make(chan struct{}), release: make(chan struct{})}
+	oldCfg := &config.Config{
+		Backends: []config.Backend{{ID: "old", Server: "https://old.example.com"}},
+		Subs: []config.Subscription{{
+			ID:     "movies",
+			Mounts: []config.Mount{{ID: "media", Backend: "old", Path: "/Old"}},
+		}},
+	}
+	if err := oldCfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	newCfg := &config.Config{
+		Backends: []config.Backend{{ID: "new", Server: "https://new.example.com"}},
+		Subs: []config.Subscription{{
+			ID:             "movies",
+			AccessCodeHash: mustHash(t, "123456"),
+			Mounts:         []config.Mount{{ID: "media", Backend: "new", Path: "/New"}},
+		}},
+	}
+	if err := newCfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewServer(mount.NewService(oldCfg, client, nil), nil)
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.example.com/s/movies/api/tvbox/category?tid=media", nil)
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(rec, req)
+		close(done)
+	}()
+
+	<-client.started
+	handler.SetService(mount.NewService(newCfg, client, nil))
+	close(client.release)
+	<-done
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	client.mu.Lock()
+	backendID, listPath := client.backendID, client.path
+	client.mu.Unlock()
+	if backendID != "old" || listPath != "/Old" {
+		t.Fatalf("category used backend/path = %q %q, want old /Old", backendID, listPath)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "http://gateway.example.com/s/movies/api/tvbox/category?tid=media", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("next request status = %d body = %s, want unauthorized from new config", rec.Code, rec.Body.String())
+	}
+}
+
+type swapDuringListClient struct {
+	mu        sync.Mutex
+	backendID string
+	path      string
+	started   chan struct{}
+	release   chan struct{}
+	once      sync.Once
+}
+
+func (s *swapDuringListClient) List(_ context.Context, backend config.Backend, path, _ string) ([]openlist.Item, error) {
+	s.mu.Lock()
+	s.backendID = backend.ID
+	s.path = path
+	s.mu.Unlock()
+	s.once.Do(func() {
+		close(s.started)
+		<-s.release
+	})
+	return nil, nil
+}
+
+func (s *swapDuringListClient) RefreshList(context.Context, config.Backend, string, string) ([]openlist.Item, error) {
+	return nil, nil
+}
+
+func (s *swapDuringListClient) Get(context.Context, config.Backend, string, string) (openlist.Item, error) {
+	return openlist.Item{}, nil
+}
+
+func (s *swapDuringListClient) Search(context.Context, config.Backend, string, string, string) ([]openlist.Item, error) {
+	return nil, nil
 }
 
 func TestScopedRefreshAPIUsesSubMounts(t *testing.T) {
@@ -430,7 +520,7 @@ func TestAuthEndpointExpiredPartialFailuresDoNotTripCooldown(t *testing.T) {
 	cfg := testGatewayConfig(t)
 	cfg.Subs[1].AccessCodeHash = mustHash(t, "123456")
 	handler := NewServer(mount.NewService(cfg, fakeOpenListClient{}, nil), nil)
-	server := handler.(*Server)
+	server := handler
 	key := "shows|192.0.2.1"
 	server.authFailures[key] = authFailure{
 		Count:        authFailureLimit - 1,

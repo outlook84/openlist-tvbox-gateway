@@ -112,6 +112,8 @@ docker exec openlist-tvbox openlist-tvbox -hash-password 123456
 - `subs[].mounts`：把后端路径挂载成 TVBox 分类。
 - `access_code_hash`：订阅访问码 hash。
 
+配置文件支持热重载。网关启动后会自动监视 `-config` 指定的配置文件，文件内容发生变化并通过校验后，会在不中断服务的情况下切换到新配置；如果新配置加载或校验失败，网关会记录错误并继续使用当前有效配置。
+
 ## 安全说明
 
 - OpenList API key、账号密码和登录 token 只保存在网关服务端。

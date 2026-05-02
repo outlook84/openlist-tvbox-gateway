@@ -110,6 +110,8 @@ Common fields:
 - `subs[].mounts`: backend paths exposed as TVBox categories.
 - `access_code_hash`: subscription access-code hash.
 
+Config files support hot reload. After startup, the gateway watches the file specified by `-config`; when the file changes and the new config loads successfully, the gateway switches to it without interrupting service. If the new config fails to load or validate, the gateway logs the error and keeps using the current valid config.
+
 ## Security Notes
 
 - OpenList API keys, passwords, and login tokens stay on the gateway server.
