@@ -101,8 +101,8 @@ subs:
     #   changeable: 0
 
     # When set, lives[].url in the subscription points to a gateway proxy URL.
-    # The gateway proxies only the live playlist file, not the actual media
-    # stream URLs inside that playlist.
+    # The gateway proxies only the live playlist file. EPG and media stream
+    # URLs inside that playlist are sent as configured.
     # Note: access_code_hash protects only the TVBox VOD API. Live proxy URLs are not access-code protected.
     #
     # Compatibility note: some Box clients enable their local live URL override
@@ -112,8 +112,9 @@ subs:
     # lives:
     #   - name: Live
     #     type: 0
-    #     url: https://example.com/iptv.m3u
-    #     epg: https://example.com/epg.xml
+    #     url: https://example.com/iptv
+    #     epg: https://example.com/epg
+    #     # Optional logo template mainly used by FongMi/TV; not proxied by the gateway.
     #     logo: https://example.com/logo/{name}.png
 
     # Mounts are the categories and path roots visible to TVBox.
