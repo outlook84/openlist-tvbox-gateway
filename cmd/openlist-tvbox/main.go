@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"openlist-tvbox/internal/auth"
@@ -65,21 +66,45 @@ func main() {
 		handler.SetService(mount.NewService(cfg, reloadedClient, logger))
 	})
 
+	serverErr := make(chan error, 1)
 	go func() {
 		logger.Info("openlist-tvbox listening", "addr", listen)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serverErr <- err
+			return
+		}
+		serverErr <- nil
+	}()
+
+	signalCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignal()
+
+	select {
+	case err := <-serverErr:
+		if err != nil {
 			logger.Error("server failed", "error", err)
 			os.Exit(1)
 		}
-	}()
+		return
+	case <-signalCtx.Done():
+	}
+	stopSignal()
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt)
-	<-stop
+	logger.Info("shutdown signal received")
 	stopReload()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_ = server.Shutdown(ctx)
+	if err := server.Shutdown(ctx); err != nil {
+		logger.Error("server graceful shutdown failed", "error", err)
+		if closeErr := server.Close(); closeErr != nil {
+			logger.Error("server close failed", "error", closeErr)
+		}
+	} else {
+		logger.Info("server graceful shutdown completed")
+	}
+	if err := <-serverErr; err != nil {
+		logger.Error("server stopped with error", "error", err)
+	}
 }
 
 type configFileState struct {
