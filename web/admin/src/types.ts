@@ -82,6 +82,11 @@ export interface ConfigMeta {
 
 export type ErrorParams = Record<string, string | number | boolean | undefined>;
 
+export interface BackendTestResult {
+  ok: boolean;
+  message?: string;
+}
+
 export class APIError extends Error {
   code?: string;
   params?: ErrorParams;

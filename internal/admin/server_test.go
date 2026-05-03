@@ -1000,6 +1000,49 @@ func TestValidateRejectsAdminSubPath(t *testing.T) {
 	}
 }
 
+func TestBackendTestUsesSavedSecretWithoutLeakingIt(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/fs/list" {
+			t.Fatalf("unexpected upstream path %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "old-secret" {
+			t.Fatalf("Authorization = %q, want saved secret", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"content":[]}}`))
+	}))
+	defer upstream.Close()
+
+	path := writeAdminConfig(t, `{
+  "backends": [
+    {"id":"b1","server":"`+upstream.URL+`","auth_type":"api_key","api_key":"old-secret"}
+  ],
+  "subs": [
+    {"id":"default","mounts":[{"id":"media","backend":"b1","path":"/Media"}]}
+  ]
+}`)
+	hash, err := hashAdminCode("123456789012")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(envAdminCodeHash, hash)
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/backend/test", strings.NewReader(`{"id":"b1","server":"`+upstream.URL+`","auth_type":"api_key","api_key_action":"keep","version":"v3"}`))
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "old-secret") {
+		t.Fatalf("response leaked secret: %s", rec.Body.String())
+	}
+}
+
 func writeAdminConfig(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.json")

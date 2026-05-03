@@ -1,4 +1,4 @@
-import { APIError, type AdminConfig, type ConfigMeta, type ErrorParams, type SessionState } from "./types";
+import { APIError, type AdminConfig, type Backend, type BackendTestResult, type ConfigMeta, type ErrorParams, type SessionState } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -55,6 +55,13 @@ export function validateConfig(config: AdminConfig) {
   return request<{ valid: boolean; error?: string; error_code?: string; error_params?: ErrorParams }>("/admin/config/validate", {
     method: "POST",
     body: JSON.stringify(config),
+  });
+}
+
+export function testBackend(backend: Backend) {
+  return request<BackendTestResult>("/admin/backend/test", {
+    method: "POST",
+    body: JSON.stringify(backend),
   });
 }
 

@@ -359,6 +359,12 @@ button.menu-item.active {
   justify-content: space-between;
 }
 
+.item-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
 .panel-head {
   justify-content: flex-end;
   margin-bottom: 12px;

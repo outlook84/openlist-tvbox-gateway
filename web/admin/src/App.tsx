@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, CircleHelp, Clipboard, Languages, LogOut, Pencil, Plus, RotateCcw, Save, ShieldCheck, Trash2, TvMinimalPlay } from "lucide-react";
-import { getConfig, getMeta, getSession, login, logout, saveConfig, setupAdmin, updateAdminAccessCode, validateConfig } from "./api";
+import { Check, ChevronDown, ChevronRight, CircleHelp, Clipboard, Languages, LogOut, Pencil, PlugZap, Plus, RotateCcw, Save, ShieldCheck, Trash2, TvMinimalPlay } from "lucide-react";
+import { getConfig, getMeta, getSession, login, logout, saveConfig, setupAdmin, testBackend, updateAdminAccessCode, validateConfig } from "./api";
 import { APIError, type AdminConfig, type Backend, type ConfigMeta, type ErrorParams, type Live, type Mount, type SecretAction, type SessionState, type Subscription } from "./types";
 import { detectLanguage, languageNames, saveLanguage, translate, type Language, type MessageKey } from "./i18n";
 
@@ -326,6 +326,8 @@ function AuthPanel({
 function BackendEditor({ config, setConfig, t }: EditorProps) {
   const backendRows = useStableRowKeys("backend-row", config.backends.length);
   const [newBackendRows, setNewBackendRows] = useState<Set<string>>(() => new Set());
+  const [testingBackend, setTestingBackend] = useState("");
+  const [backendStatus, setBackendStatus] = useState<Record<string, { message: string; error: string }>>({});
 
   function updateBackend(index: number, patch: Partial<Backend>) {
     setConfig((current) => ({
@@ -355,11 +357,38 @@ function BackendEditor({ config, setConfig, t }: EditorProps) {
     setConfig((current) => ({ ...current, backends: current.backends.filter((_, i) => i !== index) }));
   }
 
+  async function handleTestBackend(rowKey: string, backend: Backend) {
+    setTestingBackend(rowKey);
+    setBackendStatus((current) => ({ ...current, [rowKey]: { message: "", error: "" } }));
+    try {
+      await testBackend(backend);
+      setBackendStatus((current) => ({ ...current, [rowKey]: { message: t("backendTestPassed"), error: "" } }));
+    } catch (err) {
+      setBackendStatus((current) => ({ ...current, [rowKey]: { message: "", error: localizeError(err, t) } }));
+    } finally {
+      setTestingBackend("");
+    }
+  }
+
   return (
     <section className="panel">
       <PanelHeader onAdd={addBackend} t={t} />
-      {config.backends.map((backend, index) => (
-        <CollapsibleItem title={backend.id || t("backend")} onRemove={() => removeBackend(index)} defaultOpen={newBackendRows.has(backendRows.keys[index])} t={t} key={backendRows.keys[index]}>
+      {config.backends.map((backend, index) => {
+        const rowKey = backendRows.keys[index];
+        const status = backendStatus[rowKey];
+        return (
+        <CollapsibleItem
+          title={backend.id || t("backend")}
+          onRemove={() => removeBackend(index)}
+          actions={
+            <button type="button" className="small" disabled={testingBackend === rowKey} onClick={() => handleTestBackend(rowKey, backend)}>
+              <PlugZap size={16} /> {testingBackend === rowKey ? t("testing") : t("test")}
+            </button>
+          }
+          defaultOpen={newBackendRows.has(rowKey)}
+          t={t}
+          key={rowKey}
+        >
           <div className="form-grid">
             <Field label={t("id")} help={t("helpBackendID")}>
               <input value={backend.id} onChange={(event) => updateBackend(index, { id: event.target.value })} autoComplete="off" name={`backend-id-${backend.id || index}`} />
@@ -412,8 +441,10 @@ function BackendEditor({ config, setConfig, t }: EditorProps) {
               />
             </>
           )}
+          {status && (status.message || status.error) && <Status message={status.message} error={status.error} />}
         </CollapsibleItem>
-      ))}
+        );
+      })}
     </section>
   );
 }
@@ -951,12 +982,14 @@ function PanelHeader({ onAdd, t }: { onAdd: () => void; t: T }) {
 function CollapsibleItem({
   title,
   onRemove,
+  actions,
   defaultOpen = false,
   t,
   children,
 }: {
   title: string;
   onRemove: () => void;
+  actions?: React.ReactNode;
   defaultOpen?: boolean;
   t: T;
   children: React.ReactNode;
@@ -970,9 +1003,12 @@ function CollapsibleItem({
           {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
           <span>{title}</span>
         </button>
-        <button type="button" className="icon danger" aria-label={t("remove")} title={t("remove")} onClick={onRemove}>
-          <Trash2 size={16} />
-        </button>
+        <div className="item-actions">
+          {actions}
+          <button type="button" className="icon danger" aria-label={t("remove")} title={t("remove")} onClick={onRemove}>
+            <Trash2 size={16} />
+          </button>
+        </div>
       </div>
       {open && children}
     </article>
@@ -1195,6 +1231,8 @@ function localizeErrorCode(code: string, params: ErrorParams | undefined, messag
       return withScope(t("backend"), backend, t("errorBackendPasswordRequired"));
     case "backend.auth_type.invalid":
       return withScope(t("backend"), backend, t("errorBackendAuthInvalid"));
+    case "backend.test_failed":
+      return withScope(t("backend"), backend, t("errorBackendTestFailed"));
     case "subscription.required":
       return t("errorSubscriptionRequired");
     case "subscription.id.invalid":
