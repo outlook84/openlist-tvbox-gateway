@@ -127,10 +127,11 @@ subs:
         path: /Movies
 
         # 可选的 OpenList 目录密码。
-        # 键是真实后端路径，且必须位于此挂载下；不是 TVBox 显示路径。
-        # 会使用最长匹配路径前缀。不需要时请省略 params。
+        # 键是相对该挂载根的目录路径；会使用最长匹配路径前缀。
+        # 例如挂载 path 为 /Movies 时，/Private 匹配后端 /Movies/Private。
+        # 不需要时请省略 params。
         params:
-          /Movies/Private: replace-with-directory-password
+          /Private: replace-with-directory-password
 
         # 可选的播放请求头，只会返回给 TVBox 用于媒体播放。
         # 网关调用 OpenList API 时不会发送这些请求头。

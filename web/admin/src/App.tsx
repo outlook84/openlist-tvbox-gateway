@@ -689,11 +689,22 @@ function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
                     <input value={mount.path} onChange={(event) => updateMount(subIndex, mountIndex, { path: event.target.value })} autoComplete="off" name={`mount-path-${sub.id || subIndex}-${mount.id || mountIndex}`} />
                   </Field>
                 </div>
+                <Field label={t("directoryPasswords")} help={t("helpDirectoryPasswords")}>
+                  <textarea
+                    className="json-editor"
+                    value={formatStringMap(mount.params)}
+                    onChange={(event) => updateMount(subIndex, mountIndex, { params: parseStringMapDraft(event.target.value) })}
+                    autoComplete="off"
+                    spellCheck={false}
+                    name={`mount-params-${sub.id || subIndex}-${mount.id || mountIndex}`}
+                    placeholder={'{\n  "/Private": "directory-password"\n}'}
+                  />
+                </Field>
                 <Field label={t("playHeaders")} help={t("helpPlayHeaders")}>
                   <textarea
                     className="json-editor"
-                    value={formatPlayHeaders(mount.play_headers)}
-                    onChange={(event) => updateMount(subIndex, mountIndex, { play_headers: parsePlayHeadersDraft(event.target.value) })}
+                    value={formatStringMap(mount.play_headers)}
+                    onChange={(event) => updateMount(subIndex, mountIndex, { play_headers: parseStringMapDraft(event.target.value) })}
                     autoComplete="off"
                     spellCheck={false}
                     name={`mount-play-headers-${sub.id || subIndex}-${mount.id || mountIndex}`}
@@ -1146,13 +1157,13 @@ function uniqueID(prefix: string, existing: string[]) {
   return id;
 }
 
-function formatPlayHeaders(headers: Mount["play_headers"]): string {
-  if (!headers || Object.keys(headers).length === 0) return "";
-  if (Object.keys(headers).length === 1 && Object.prototype.hasOwnProperty.call(headers, "")) return headers[""] || "";
-  return JSON.stringify(headers, null, 2);
+function formatStringMap(values?: Record<string, string>): string {
+  if (!values || Object.keys(values).length === 0) return "";
+  if (Object.keys(values).length === 1 && Object.prototype.hasOwnProperty.call(values, "")) return values[""] || "";
+  return JSON.stringify(values, null, 2);
 }
 
-function parsePlayHeadersDraft(value: string): Mount["play_headers"] {
+function parseStringMapDraft(value: string): Record<string, string> | undefined {
   const trimmed = value.trim();
   if (!trimmed) return undefined;
   try {
@@ -1160,11 +1171,11 @@ function parsePlayHeadersDraft(value: string): Mount["play_headers"] {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return { "": value };
     }
-    const headers: Record<string, string> = {};
-    for (const [key, headerValue] of Object.entries(parsed)) {
-      headers[key] = typeof headerValue === "string" ? headerValue : String(headerValue);
+    const values: Record<string, string> = {};
+    for (const [key, mapValue] of Object.entries(parsed)) {
+      values[key] = typeof mapValue === "string" ? mapValue : String(mapValue);
     }
-    return headers;
+    return values;
   } catch {
     return { "": value };
   }
@@ -1299,6 +1310,8 @@ function localizeErrorCode(code: string, params: ErrorParams | undefined, messag
       return withMountScope(sub, mount, `${t("backend")} ${backend}: ${t("errorBackendUnknown")}`, t);
     case "mount.path.invalid":
       return withMountScope(sub, mount, t("errorPathInvalid"), t);
+    case "mount.params.invalid":
+      return withMountScope(sub, mount, t("errorDirectoryPasswordsInvalid"), t);
     case "mount.play_headers.invalid":
       return withMountScope(sub, mount, t("errorPlayHeadersInvalid"), t);
     case "subscription.live.url_required":

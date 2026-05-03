@@ -75,6 +75,47 @@ func TestValidateNormalizesPlayHeaders(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsEmptyDirectoryPasswordPath(t *testing.T) {
+	cfg := Config{
+		Backends: []Backend{{ID: "b1", Server: "https://example.com"}},
+		Subs: []Subscription{{
+			Mounts: []Mount{{
+				ID:      "m1",
+				Backend: "b1",
+				Path:    "/",
+				Params:  map[string]string{"": "{not json"},
+			}},
+		}},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected directory password params error")
+	}
+	if got := ErrorCode(err, ""); got != "mount.params.invalid" {
+		t.Fatalf("error code = %q, want mount.params.invalid; err = %v", got, err)
+	}
+}
+
+func TestValidateNormalizesDirectoryPasswordPaths(t *testing.T) {
+	cfg := Config{
+		Backends: []Backend{{ID: "b1", Server: "https://example.com"}},
+		Subs: []Subscription{{
+			Mounts: []Mount{{
+				ID:      "m1",
+				Backend: "b1",
+				Path:    "/",
+				Params:  map[string]string{" Private/ ": "secret"},
+			}},
+		}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Subs[0].Mounts[0].Params["/Private"]; got != "secret" {
+		t.Fatalf("directory password = %q", got)
+	}
+}
+
 func TestLoadYAMLWithMultipleSubs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	data := []byte(`

@@ -131,10 +131,11 @@ subs:
         path: /Movies
 
         # Optional OpenList directory passwords.
-        # Keys are real backend paths under this mount, not TVBox display paths.
-        # The longest matching path prefix wins. Omit params when not needed.
+        # Keys are directory paths relative to this mount root. The longest
+        # matching path prefix wins. For mount path /Movies, /Private matches
+        # backend path /Movies/Private. Omit params when not needed.
         params:
-          /Movies/Private: replace-with-directory-password
+          /Private: replace-with-directory-password
 
         # Optional playback headers returned to TVBox for media playback only.
         # These are not sent when the gateway calls OpenList APIs.

@@ -422,6 +422,11 @@ func validateMounts(subID string, mounts []Mount, backendIDs map[string]struct{}
 			return CodedErrorf("mount.path.invalid", map[string]any{"sub_id": subID, "mount_id": m.ID}, "sub %q mount %q path: %v", subID, m.ID, err)
 		}
 		m.Path = clean
+		params, err := NormalizeMountParams(m.Params)
+		if err != nil {
+			return CodedErrorf("mount.params.invalid", map[string]any{"sub_id": subID, "mount_id": m.ID}, "sub %q mount %q params: %v", subID, m.ID, err)
+		}
+		m.Params = params
 		headers, err := NormalizePlayHeaders(m.PlayHeaders)
 		if err != nil {
 			return CodedErrorf("mount.play_headers.invalid", map[string]any{"sub_id": subID, "mount_id": m.ID}, "sub %q mount %q play_headers: %v", subID, m.ID, err)
@@ -521,6 +526,31 @@ func CleanHTTPPath(path string) (string, error) {
 
 func (m Mount) SearchEnabled() bool {
 	return m.Search == nil || *m.Search
+}
+
+func NormalizeMountParams(params map[string]string) (map[string]string, error) {
+	if len(params) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(params))
+	for key, value := range params {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil, errors.New("directory password path must not be empty")
+		}
+		clean, err := CleanMountRoot(key)
+		if err != nil {
+			return nil, fmt.Errorf("invalid directory password path %q: %w", key, err)
+		}
+		if _, ok := out[clean]; ok {
+			return nil, fmt.Errorf("duplicate directory password path %q", clean)
+		}
+		if strings.ContainsAny(value, "\r\n\x00") {
+			return nil, fmt.Errorf("invalid password for directory password path %q", clean)
+		}
+		out[clean] = value
+	}
+	return out, nil
 }
 
 func NormalizePlayHeaders(headers map[string]string) (map[string]string, error) {
