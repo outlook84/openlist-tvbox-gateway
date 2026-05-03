@@ -163,7 +163,7 @@ function OverviewPanel({ config, setConfig, t }: EditorProps) {
         <h2>{t("topLevelSettings")}</h2>
         <div className="settings-grid">
           <Field label={t("publicBaseURL")} help={t("helpPublicBaseURL")}>
-            <input value={config.public_base_url || ""} onChange={(event) => updateConfig(setConfig, { public_base_url: event.target.value })} />
+            <input value={config.public_base_url || ""} onChange={(event) => updateConfig(setConfig, { public_base_url: event.target.value })} autoComplete="off" name="public-base-url" />
           </Field>
           <label className="check-row">
             <input
@@ -177,10 +177,10 @@ function OverviewPanel({ config, setConfig, t }: EditorProps) {
         </div>
         <div className="form-grid">
           <Field label={t("defaultSiteKey")} help={t("helpDefaultSiteKey")}>
-            <input value={tvbox.site_key || ""} onChange={(event) => updateTVBox(setConfig, { site_key: event.target.value })} placeholder="openlist_tvbox" />
+            <input value={tvbox.site_key || ""} onChange={(event) => updateTVBox(setConfig, { site_key: event.target.value })} placeholder="openlist_tvbox" autoComplete="off" name="default-site-key" />
           </Field>
           <Field label={t("defaultSiteName")} help={t("helpDefaultSiteName")}>
-            <input value={tvbox.site_name || ""} onChange={(event) => updateTVBox(setConfig, { site_name: event.target.value })} placeholder="OpenList" />
+            <input value={tvbox.site_name || ""} onChange={(event) => updateTVBox(setConfig, { site_name: event.target.value })} placeholder="OpenList" autoComplete="off" name="default-site-name" />
           </Field>
           <Field label={t("timeoutSeconds")} help={t("helpTimeoutSeconds")}>
             <input
@@ -189,6 +189,8 @@ function OverviewPanel({ config, setConfig, t }: EditorProps) {
               value={tvbox.timeout || ""}
               onChange={(event) => updateTVBox(setConfig, { timeout: parseOptionalInt(event.target.value) })}
               placeholder="15"
+              autoComplete="off"
+              name="default-timeout"
             />
           </Field>
         </div>
@@ -359,10 +361,10 @@ function BackendEditor({ config, setConfig, t }: EditorProps) {
         <CollapsibleItem title={backend.id || t("backend")} onRemove={() => removeBackend(index)} defaultOpen={newBackendRows.has(backendRows.keys[index])} t={t} key={backendRows.keys[index]}>
           <div className="form-grid">
             <Field label={t("id")} help={t("helpBackendID")}>
-              <input value={backend.id} onChange={(event) => updateBackend(index, { id: event.target.value })} />
+              <input value={backend.id} onChange={(event) => updateBackend(index, { id: event.target.value })} autoComplete="off" name={`backend-id-${backend.id || index}`} />
             </Field>
             <Field label={t("server")} help={t("helpBackendServer")}>
-              <input value={backend.server} onChange={(event) => updateBackend(index, { server: event.target.value })} />
+              <input value={backend.server} onChange={(event) => updateBackend(index, { server: event.target.value })} autoComplete="off" name={`backend-server-${backend.id || index}`} />
             </Field>
             <Field label={t("auth")} help={t("helpBackendAuth")}>
               <select value={backend.auth_type || "anonymous"} onChange={(event) => updateBackend(index, { auth_type: event.target.value as Backend["auth_type"] })}>
@@ -372,7 +374,7 @@ function BackendEditor({ config, setConfig, t }: EditorProps) {
               </select>
             </Field>
             <Field label={t("version")} help={t("helpBackendVersion")}>
-              <input value={backend.version || "v3"} onChange={(event) => updateBackend(index, { version: event.target.value })} />
+              <input value={backend.version || "v3"} onChange={(event) => updateBackend(index, { version: event.target.value })} autoComplete="off" name={`backend-version-${backend.id || index}`} />
             </Field>
           </div>
           {backend.auth_type === "api_key" && (
@@ -505,16 +507,16 @@ function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
           <SubLink sub={sub} baseURL={config.public_base_url || ""} t={t} />
           <div className="form-grid">
             <Field label={t("id")} help={t("helpSubscriptionID")}>
-              <input value={sub.id} onChange={(event) => updateSub(subIndex, { id: event.target.value })} />
+              <input value={sub.id} onChange={(event) => updateSub(subIndex, { id: event.target.value })} autoComplete="off" name={`subscription-id-${sub.id || subIndex}`} />
             </Field>
             <Field label={t("path")} help={t("helpSubscriptionPath")}>
-              <input value={sub.path || ""} onChange={(event) => updateSub(subIndex, { path: event.target.value })} />
+              <input value={sub.path || ""} onChange={(event) => updateSub(subIndex, { path: event.target.value })} autoComplete="off" name={`subscription-path-${sub.id || subIndex}`} />
             </Field>
             <Field label={t("siteKey")} help={t("helpSiteKey")}>
-              <input value={sub.site_key || ""} onChange={(event) => updateSub(subIndex, { site_key: event.target.value })} />
+              <input value={sub.site_key || ""} onChange={(event) => updateSub(subIndex, { site_key: event.target.value })} autoComplete="off" name={`subscription-site-key-${sub.id || subIndex}`} />
             </Field>
             <Field label={t("siteName")} help={t("helpSiteName")}>
-              <input value={sub.site_name || ""} onChange={(event) => updateSub(subIndex, { site_name: event.target.value })} />
+              <input value={sub.site_name || ""} onChange={(event) => updateSub(subIndex, { site_name: event.target.value })} autoComplete="off" name={`subscription-site-name-${sub.id || subIndex}`} />
             </Field>
           </div>
           <SecretHashField sub={sub} onChange={(patch) => updateSub(subIndex, patch)} t={t} />
@@ -537,10 +539,10 @@ function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
               >
                 <div className="form-grid">
                   <Field label={t("id")} help={t("helpMountID")}>
-                    <input value={mount.id} onChange={(event) => updateMount(subIndex, mountIndex, { id: event.target.value })} />
+                    <input value={mount.id} onChange={(event) => updateMount(subIndex, mountIndex, { id: event.target.value })} autoComplete="off" name={`mount-id-${sub.id || subIndex}-${mount.id || mountIndex}`} />
                   </Field>
                   <Field label={t("name")} help={t("helpMountName")}>
-                    <input value={mount.name || ""} onChange={(event) => updateMount(subIndex, mountIndex, { name: event.target.value })} />
+                    <input value={mount.name || ""} onChange={(event) => updateMount(subIndex, mountIndex, { name: event.target.value })} autoComplete="off" name={`mount-name-${sub.id || subIndex}-${mount.id || mountIndex}`} />
                   </Field>
                   <Field label={t("backend")} help={t("helpMountBackend")}>
                     <select value={mount.backend} onChange={(event) => updateMount(subIndex, mountIndex, { backend: event.target.value })}>
@@ -553,7 +555,7 @@ function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
                     </select>
                   </Field>
                   <Field label={t("path")} help={t("helpMountPath")}>
-                    <input value={mount.path} onChange={(event) => updateMount(subIndex, mountIndex, { path: event.target.value })} />
+                    <input value={mount.path} onChange={(event) => updateMount(subIndex, mountIndex, { path: event.target.value })} autoComplete="off" name={`mount-path-${sub.id || subIndex}-${mount.id || mountIndex}`} />
                   </Field>
                 </div>
                 <div className="toggles">
