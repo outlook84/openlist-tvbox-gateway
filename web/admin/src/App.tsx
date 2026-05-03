@@ -754,6 +754,7 @@ function SecretField({
         editing={editing}
         canReset={canReset}
         canDelete={set}
+        showClear={false}
         onEdit={() => setEditing(true)}
         onKeep={resetDraft}
         onClear={clearSecret}
@@ -768,6 +769,7 @@ function SecretPendingActions({
   editing = true,
   canReset,
   canDelete,
+  showClear = true,
   onEdit,
   onKeep,
   onClear,
@@ -777,6 +779,7 @@ function SecretPendingActions({
   editing?: boolean;
   canReset: boolean;
   canDelete: boolean;
+  showClear?: boolean;
   onEdit?: () => void;
   onKeep: () => void;
   onClear: () => void;
@@ -793,9 +796,11 @@ function SecretPendingActions({
           <Pencil size={16} />
         </button>
       )}
-      <button type="button" className={action === "clear" && canDelete ? "icon danger active" : "icon danger"} aria-label={t("clear")} title={t("clear")} disabled={!canDelete} onClick={onClear}>
-        <Trash2 size={16} />
-      </button>
+      {showClear && (
+        <button type="button" className={action === "clear" && canDelete ? "icon danger active" : "icon danger"} aria-label={t("clear")} title={t("clear")} disabled={!canDelete} onClick={onClear}>
+          <Trash2 size={16} />
+        </button>
+      )}
     </div>
   );
 }
