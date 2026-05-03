@@ -241,13 +241,21 @@ func (authorizationError) Error() string {
 	return "openlist authorization failed; check backend credentials"
 }
 
+type permissionError struct {
+	message string
+}
+
+func (e permissionError) Error() string {
+	if e.message == "" {
+		return "openlist permission denied"
+	}
+	return "openlist permission denied: " + e.message
+}
+
 func decodeResponse(resp *http.Response, out any) error {
 	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return authorizationError{}
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("openlist returned status %d", resp.StatusCode)
 	}
 	var envelope struct {
 		Code    int             `json:"code"`
@@ -255,12 +263,31 @@ func decodeResponse(resp *http.Response, out any) error {
 		Data    json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(payload, &envelope); err != nil {
+		if resp.StatusCode == http.StatusForbidden {
+			return permissionError{}
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return fmt.Errorf("openlist returned status %d", resp.StatusCode)
+		}
 		return fmt.Errorf("invalid openlist response")
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		msg := strings.ToLower(envelope.Message)
+		if strings.Contains(msg, "token") || strings.Contains(msg, "authorization") || strings.Contains(msg, "guest user is disabled") {
+			return authorizationError{}
+		}
+		return permissionError{message: sanitizeMessage(envelope.Message)}
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("openlist returned status %d", resp.StatusCode)
 	}
 	if envelope.Code != 0 && envelope.Code != 200 {
 		msg := strings.ToLower(envelope.Message)
 		if strings.Contains(msg, "token") || strings.Contains(msg, "authorization") || strings.Contains(msg, "guest user is disabled") {
 			return authorizationError{}
+		}
+		if strings.Contains(msg, "permission") || strings.Contains(msg, "no permission") {
+			return permissionError{message: sanitizeMessage(envelope.Message)}
 		}
 		return fmt.Errorf("openlist api error: %s", sanitizeMessage(envelope.Message))
 	}

@@ -62,7 +62,7 @@ backends:
     server: https://backup-openlist.example.com
     auth_type: password
     # password 认证会在服务端登录，在内存中缓存 token，
-    # 并在 OpenList 返回 401/403 后重试一次。token 不会持久化保存。
+    # 并在 OpenList 返回登录 token 失效错误后重试一次。token 不会持久化保存。
     user: admin
     password_env: OPENLIST_BACKUP_PASSWORD
     # 简单部署也支持直接填写值，但这会把密钥保存在此文件中。
@@ -146,7 +146,9 @@ subs:
         search: true
 
         # 是否在目录列表中显示“刷新此目录”操作。
-        # 默认值：false。需要后端账号对挂载路径拥有 OpenList/AList 刷新权限。
+        # 默认值：false。OpenList/AList 刷新会触发服务端写权限检查：
+        # api_key 通常等同管理员；password 认证用户需要对挂载路径拥有“写内容”
+        # 权限，并满足目录 meta 的写入用户白名单。
         refresh: false
 
         # 是否从首页分类和聚合搜索中隐藏此挂载。

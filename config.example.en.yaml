@@ -63,7 +63,7 @@ backends:
     server: https://backup-openlist.example.com
     auth_type: password
     # password auth logs in server-side, caches the token in memory, and retries
-    # once after OpenList returns 401/403. Tokens are not persisted.
+    # once after OpenList reports an expired login token. Tokens are not persisted.
     user: admin
     password_env: OPENLIST_BACKUP_PASSWORD
     # Direct value is also supported for simple deployments, but it stores the
@@ -151,8 +151,10 @@ subs:
         search: true
 
         # Shows a "刷新此目录" action in directory listings.
-        # Default: false. Requires the backend account to have OpenList/AList
-        # refresh permission for the mounted path.
+        # Default: false. OpenList/AList refresh checks server-side write
+        # permissions: api_key usually acts as admin; password-auth users need
+        # "write content" permission for the mounted path and must satisfy any
+        # directory meta write-user whitelist.
         refresh: false
 
         # Hides this mount from home categories and aggregated search.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -183,6 +184,57 @@ func TestClientPasswordAuthReloginsOnceAfterUnauthorized(t *testing.T) {
 		t.Fatalf("login count = %d", loginCount)
 	}
 	if fsCount != 2 {
+		t.Fatalf("fs count = %d", fsCount)
+	}
+}
+
+func TestClientPasswordRefreshPermissionDeniedDoesNotRelogin(t *testing.T) {
+	var mu sync.Mutex
+	loginCount := 0
+	fsCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/auth/login" {
+			mu.Lock()
+			loginCount++
+			mu.Unlock()
+			writeOpenListJSON(t, w, map[string]any{
+				"code":    200,
+				"message": "success",
+				"data":    map[string]any{"token": "login-token"},
+			})
+			return
+		}
+		mu.Lock()
+		fsCount++
+		mu.Unlock()
+		w.WriteHeader(http.StatusForbidden)
+		writeOpenListJSON(t, w, map[string]any{
+			"code":    403,
+			"message": "Refresh without permission",
+			"data":    nil,
+		})
+	}))
+	defer server.Close()
+	client := NewClient(server.Client(), nil)
+	_, err := client.RefreshList(context.Background(), config.Backend{
+		ID:       "main",
+		Server:   server.URL,
+		AuthType: "password",
+		User:     "admin",
+		Password: "password",
+	}, "/", "")
+	if err == nil {
+		t.Fatal("expected permission error")
+	}
+	if !strings.Contains(err.Error(), "permission denied") || !strings.Contains(err.Error(), "Refresh without permission") {
+		t.Fatalf("error = %q", err.Error())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if loginCount != 1 {
+		t.Fatalf("login count = %d", loginCount)
+	}
+	if fsCount != 1 {
 		t.Fatalf("fs count = %d", fsCount)
 	}
 }
