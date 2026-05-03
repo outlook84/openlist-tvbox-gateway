@@ -684,4 +684,20 @@ button.help-button:focus-visible {
   .actions button:not(.icon) span {
     display: none;
   }
+
+  .tooltip {
+    bottom: 18px;
+    left: 16px;
+    max-width: none;
+    position: fixed;
+    right: 16px;
+    transform: translateY(4px);
+    width: auto;
+  }
+
+  .help-tip:hover .tooltip,
+  .help-tip:focus-within .tooltip,
+  .tooltip.open {
+    transform: translateY(0);
+  }
 }
