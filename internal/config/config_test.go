@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -160,9 +161,9 @@ func TestSubTVBoxAllowsExplicitSiteKey(t *testing.T) {
 		TVBox:    TVBox{SiteKey: "global_key", SiteName: "Global"},
 		Backends: []Backend{{ID: "b1", Server: "https://example.com"}},
 		Subs: []Subscription{{
-			ID:     "movies",
+			ID:      "movies",
 			SiteKey: "custom_key",
-			Mounts: []Mount{{ID: "m1", Backend: "b1", Path: "/"}},
+			Mounts:  []Mount{{ID: "m1", Backend: "b1", Path: "/"}},
 		}},
 	}
 	if err := cfg.Validate(); err != nil {
@@ -473,5 +474,39 @@ func TestValidateRejectsBackendAuthTypeCredentialConflicts(t *testing.T) {
 				t.Fatal("expected credential conflict error")
 			}
 		})
+	}
+}
+
+func TestEnsureEditableJSONCreatesMinimalConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := EnsureEditableJSON(path); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Backends) != 1 || cfg.Backends[0].ID != "local" {
+		t.Fatalf("backends = %#v", cfg.Backends)
+	}
+	if len(cfg.Subs) != 0 {
+		t.Fatalf("subs = %#v", cfg.Subs)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v", info.Mode().Perm())
+	}
+}
+
+func TestEnsureEditableJSONDoesNotCreateYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := EnsureEditableJSON(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("yaml file should not be created: %v", err)
 	}
 }

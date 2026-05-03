@@ -46,6 +46,10 @@ func main() {
 		_, _ = os.Stdout.WriteString(hash + "\n")
 		return
 	}
+	if err := config.EnsureEditableJSON(configPath); err != nil {
+		logger.Error("initialize editable json config failed", "path", configPath, "error", err)
+		os.Exit(1)
+	}
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		logConfigLoadError(logger, configPath, err)

@@ -5,13 +5,22 @@
   "type": "module",
   "scripts": {
     "build:icons": "node scripts/build-icons.mjs",
-    "build": "esbuild ./tvbox/src/index.ts --bundle --format=esm --target=es2020 --outfile=internal/gateway/assets/openlist-tvbox.js",
+    "build:spider": "esbuild ././tvbox/src/index.ts --bundle --format=esm --target=es2020 --outfile=internal/gateway/assets/openlist-tvbox.js",
+    "build:admin": "vite build web/admin --outDir ../../internal/admin/assets --emptyOutDir",
+    "build": "pnpm build:spider && pnpm build:admin",
     "build:go": "pnpm build && node scripts/build-go.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",
     "lucide-static": "^1.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "vite": "^7.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "lucide-react": "^0.468.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "typescript": "^5.8.0"
   }
 }

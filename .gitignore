@@ -4,11 +4,15 @@ node_modules/
 coverage/
 .env
 config.json
+config.json.bak
 config.yaml
 admin_access_code_hash
 admin_setup_code
 dist
 AGENTS.md
 plans/
+.gocache
 
 internal/gateway/assets/openlist-tvbox.js
+internal/admin/assets/*
+!internal/admin/assets/placeholder.txt

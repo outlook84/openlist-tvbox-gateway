@@ -13,9 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	"openlist-tvbox/internal/auth"
 	"openlist-tvbox/internal/config"
 )
+
+func init() {
+	adminBcryptCost = bcrypt.MinCost
+}
 
 func TestNewServerCreatesSetupCodeForJSONMode(t *testing.T) {
 	path := writeAdminConfig(t, testJSONConfig("old-secret"))
@@ -162,6 +167,60 @@ func TestAdminLogoutClearsSession(t *testing.T) {
 	server.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateAdminAccessCodeChangesLoginSecret(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/access-code", strings.NewReader(`{"new_access_code":"abcdefghijkl"}`))
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if verifyAdminCode(server.adminHash(), "abcdefghijkl") != nil {
+		t.Fatal("new admin code does not verify")
+	}
+	if verifyAdminCode(server.adminHash(), "123456789012") == nil {
+		t.Fatal("old admin code should no longer verify")
+	}
+
+	secretData, err := os.ReadFile(filepath.Join(filepath.Dir(path), secretFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(secretData), "abcdefghijkl") {
+		t.Fatal("admin secret file contains plaintext access code")
+	}
+	loginAdmin(t, server, "abcdefghijkl")
+}
+
+func TestUpdateAdminAccessCodeRejectsCurrentCodeField(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/access-code", strings.NewReader(`{"current_access_code":"wrong-code","new_access_code":"abcdefghijkl"}`))
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if verifyAdminCode(server.adminHash(), "123456789012") != nil {
+		t.Fatal("current admin code should still verify")
 	}
 }
 
@@ -433,6 +492,116 @@ func TestPutConfigKeepsAndReplacesSecrets(t *testing.T) {
 	}
 }
 
+func TestPutConfigHashesSubscriptionAccessCode(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+	body := `{
+  "backends": [
+    {"id":"b1","server":"https://openlist.example.com","auth_type":"api_key","api_key_action":"keep"}
+  ],
+  "subs": [
+    {"id":"default","access_code_hash_action":"replace","access_code":"456789","mounts":[{"id":"media","backend":"b1","path":"/Media"}]}
+  ]
+}`
+	req := httptest.NewRequest(http.MethodPut, "http://example.com/admin/config", strings.NewReader(body))
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "456789") {
+		t.Fatalf("saved config contains plaintext access code: %s", data)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := auth.VerifyPassword(cfg.Subs[0].AccessCodeHash, "456789"); err != nil {
+		t.Fatalf("saved access code hash does not verify: %v", err)
+	}
+}
+
+func TestValidateConfigReturnsStructuredSubscriptionAccessCodeError(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+	body := `{
+  "backends": [
+    {"id":"b1","server":"https://openlist.example.com","auth_type":"api_key","api_key_action":"keep"}
+  ],
+  "subs": [
+    {"id":"sub1","access_code_hash_action":"replace","access_code":"12","mounts":[{"id":"media","backend":"b1","path":"/Media"}]}
+  ]
+}`
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/config/validate", strings.NewReader(body))
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["valid"] != false || got["error_code"] != "subscription.access_code.invalid" {
+		t.Fatalf("unexpected response: %s", rec.Body.String())
+	}
+	params, ok := got["error_params"].(map[string]any)
+	if !ok || params["sub_id"] != "sub1" {
+		t.Fatalf("missing sub_id params: %s", rec.Body.String())
+	}
+}
+
+func TestPutConfigReturnsStructuredConfigValidationError(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+	body := `{
+  "backends": [
+    {"id":"b1","server":"not-a-url","auth_type":"anonymous"}
+  ],
+  "subs": []
+}`
+	req := httptest.NewRequest(http.MethodPut, "http://example.com/admin/config", strings.NewReader(body))
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["error_code"] != "backend.server.invalid" {
+		t.Fatalf("unexpected response: %s", rec.Body.String())
+	}
+	params, ok := got["error_params"].(map[string]any)
+	if !ok || params["backend_id"] != "b1" {
+		t.Fatalf("missing backend_id params: %s", rec.Body.String())
+	}
+}
+
 func TestPutConfigAllowsAsterisksInReplacedSecrets(t *testing.T) {
 	path := writeAdminConfig(t, testJSONConfig("old-secret"))
 	t.Setenv(envAdminCode, "123456789012")
@@ -571,16 +740,10 @@ func TestValidateConfigAcceptsRedactedGetResponse(t *testing.T) {
 	}
 }
 
-func TestPutConfigKeepsEnvBackedSecretsWithoutPersistingResolvedValues(t *testing.T) {
+func TestPutConfigRejectsEnvBackedSecrets(t *testing.T) {
 	t.Setenv("OPENLIST_TEST_API_KEY", "env-api-secret")
 	t.Setenv("OPENLIST_TEST_PASSWORD", "env-password-secret")
-	path := writeAdminConfig(t, `{
-  "backends": [
-    {"id":"api","server":"https://api.example.com","auth_type":"api_key","api_key_env":"OPENLIST_TEST_API_KEY"},
-    {"id":"pwd","server":"https://pwd.example.com","auth_type":"password","user":"admin","password_env":"OPENLIST_TEST_PASSWORD"}
-  ],
-  "subs": []
-}`)
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
 	t.Setenv(envAdminCode, "123456789012")
 	server, err := NewServer(Options{ConfigPath: path})
 	if err != nil {
@@ -589,10 +752,11 @@ func TestPutConfigKeepsEnvBackedSecretsWithoutPersistingResolvedValues(t *testin
 	cookie := loginAdmin(t, server, "123456789012")
 	body := `{
   "backends": [
-    {"id":"api","server":"https://api.example.com","auth_type":"api_key","api_key_env":"OPENLIST_TEST_API_KEY","api_key_action":"keep"},
-    {"id":"pwd","server":"https://pwd.example.com","auth_type":"password","user":"admin","password_env":"OPENLIST_TEST_PASSWORD","password_action":"keep"}
+    {"id":"api","server":"https://api.example.com","auth_type":"api_key","api_key_env":"OPENLIST_TEST_API_KEY"}
   ],
-  "subs": []
+  "subs": [
+    {"id":"default","mounts":[{"id":"media","backend":"api","path":"/Media"}]}
+  ]
 }`
 	req := httptest.NewRequest(http.MethodPut, "http://example.com/admin/config", strings.NewReader(body))
 	req.AddCookie(cookie)
@@ -600,29 +764,11 @@ func TestPutConfigKeepsEnvBackedSecretsWithoutPersistingResolvedValues(t *testin
 
 	server.Handler().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(data)
-	if strings.Contains(text, "env-api-secret") || strings.Contains(text, "env-password-secret") {
-		t.Fatalf("persisted resolved env secret: %s", text)
-	}
-	if !strings.Contains(text, `"api_key_env": "OPENLIST_TEST_API_KEY"`) || !strings.Contains(text, `"password_env": "OPENLIST_TEST_PASSWORD"`) {
-		t.Fatalf("env references were not preserved: %s", text)
-	}
-	if strings.Contains(text, `"api_key": ""`) || strings.Contains(text, `"password": ""`) {
-		t.Fatalf("persisted empty secret field next to env reference: %s", text)
-	}
-	cfg, err := config.Load(path)
-	if err != nil {
-		t.Fatalf("saved env-backed config did not reload: %v", err)
-	}
-	if cfg.Backends[0].APIKey != "env-api-secret" || cfg.Backends[1].Password != "env-password-secret" {
-		t.Fatalf("saved env-backed secrets did not resolve on reload: %+v", cfg.Backends)
+	if !strings.Contains(rec.Body.String(), "invalid config json") {
+		t.Fatalf("missing invalid json error: %s", rec.Body.String())
 	}
 }
 
@@ -644,6 +790,46 @@ func TestAdminRejectsMissingCode(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminServesEmbeddedAppWithoutSession(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/admin", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `id="root"`) {
+		t.Fatalf("missing app root: %s", rec.Body.String())
+	}
+}
+
+func TestAdminServesEmbeddedAssetWithoutSession(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/assets/index.html", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if cache := rec.Header().Get("Cache-Control"); !strings.Contains(cache, "immutable") {
+		t.Fatalf("cache-control = %q", cache)
 	}
 }
 

@@ -3,7 +3,13 @@ package auth
 import (
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/bcrypt"
 )
+
+func init() {
+	bcryptCost = bcrypt.MinCost
+}
 
 func TestHashPasswordVerifies(t *testing.T) {
 	hash, err := HashPassword("123456")

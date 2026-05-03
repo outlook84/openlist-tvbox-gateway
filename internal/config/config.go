@@ -102,6 +102,40 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+func EnsureEditableJSON(path string) error {
+	if !IsJSONPath(path) {
+		return nil
+	}
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	cfg := Config{
+		Backends: []Backend{
+			{
+				ID:       "local",
+				Server:   "http://127.0.0.1:5244",
+				AuthType: "anonymous",
+				Version:  "v3",
+			},
+		},
+		Subs: []Subscription{},
+	}
+	if err := cfg.ValidateEditable(); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
 func IsJSONPath(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".json")
 }
@@ -119,13 +153,17 @@ func (c *Config) Validate() error {
 	return c.validate(validateOptions{})
 }
 
+// ValidateEditable is for the JSON admin editor. Editable JSON stores secrets
+// directly and intentionally rejects env-backed secrets; use YAML for env-only
+// secret configuration.
 func (c *Config) ValidateEditable() error {
-	return c.validate(validateOptions{AllowEmptySubs: true, ReservedHTTPPrefixes: []string{"/admin"}})
+	return c.validate(validateOptions{AllowEmptySubs: true, ReservedHTTPPrefixes: []string{"/admin"}, RejectEnvSecrets: true})
 }
 
 type validateOptions struct {
 	AllowEmptySubs       bool
 	ReservedHTTPPrefixes []string
+	RejectEnvSecrets     bool
 }
 
 func (c *Config) validate(opts validateOptions) error {
@@ -133,42 +171,49 @@ func (c *Config) validate(opts validateOptions) error {
 	if c.PublicBaseURL != "" {
 		u, err := url.Parse(c.PublicBaseURL)
 		if err != nil || u.Scheme == "" || u.Host == "" {
-			return errors.New("public_base_url must be an absolute URL when set")
+			return CodedErrorf("config.public_base_url.invalid", nil, "public_base_url must be an absolute URL when set")
 		}
 	}
 	c.TVBox = normalizeTVBox(c.TVBox)
 	if !validID(c.TVBox.SiteKey) {
-		return errors.New("tvbox.site_key must contain only letters, digits, underscore or dash")
+		return CodedErrorf("tvbox.site_key.invalid", nil, "tvbox.site_key must contain only letters, digits, underscore or dash")
 	}
 	if len(c.Backends) == 0 {
-		return errors.New("at least one backend is required")
+		return CodedErrorf("backend.required", nil, "at least one backend is required")
 	}
 	backendIDs := map[string]struct{}{}
 	for i := range c.Backends {
 		b := &c.Backends[i]
 		if !validID(b.ID) {
-			return fmt.Errorf("backend[%d] id must contain only letters, digits, underscore or dash", i)
+			return CodedErrorf("backend.id.invalid", map[string]any{"index": i}, "backend[%d] id must contain only letters, digits, underscore or dash", i)
 		}
 		if _, ok := backendIDs[b.ID]; ok {
-			return fmt.Errorf("duplicate backend id %q", b.ID)
+			return CodedErrorf("backend.id.duplicate", map[string]any{"backend_id": b.ID}, "duplicate backend id %q", b.ID)
 		}
 		backendIDs[b.ID] = struct{}{}
 		u, err := url.Parse(b.Server)
 		if err != nil || u.Scheme == "" || u.Host == "" {
-			return fmt.Errorf("backend %q server must be an absolute URL", b.ID)
+			return CodedErrorf("backend.server.invalid", map[string]any{"backend_id": b.ID}, "backend %q server must be an absolute URL", b.ID)
 		}
 		b.Server = strings.TrimRight(b.Server, "/")
 		if b.Version == "" {
 			b.Version = "v3"
 		} else if b.Version != "v3" {
-			return fmt.Errorf("backend %q version must be v3", b.ID)
+			return CodedErrorf("backend.version.invalid", map[string]any{"backend_id": b.ID, "version": b.Version}, "backend %q version must be v3", b.ID)
+		}
+		if opts.RejectEnvSecrets {
+			b.APIKeyEnv = strings.TrimSpace(b.APIKeyEnv)
+			b.PasswordEnv = strings.TrimSpace(b.PasswordEnv)
+			if b.APIKeyEnv != "" || b.PasswordEnv != "" {
+				return CodedErrorf("backend.env_secret.unsupported", map[string]any{"backend_id": b.ID}, "backend %q env-backed secrets are not supported in editable JSON config", b.ID)
+			}
 		}
 		if err := normalizeBackendAuth(b); err != nil {
 			return err
 		}
 	}
 	if len(c.Subs) == 0 && !opts.AllowEmptySubs {
-		return errors.New("at least one sub is required")
+		return CodedErrorf("subscription.required", nil, "at least one sub is required")
 	}
 	subIDs := map[string]struct{}{}
 	subPaths := map[string]struct{}{}
@@ -179,10 +224,10 @@ func (c *Config) validate(opts validateOptions) error {
 			sub.ID = "default"
 		}
 		if !validID(sub.ID) {
-			return fmt.Errorf("subs[%d] id must contain only letters, digits, underscore or dash", i)
+			return CodedErrorf("subscription.id.invalid", map[string]any{"index": i}, "subs[%d] id must contain only letters, digits, underscore or dash", i)
 		}
 		if _, ok := subIDs[sub.ID]; ok {
-			return fmt.Errorf("duplicate sub id %q", sub.ID)
+			return CodedErrorf("subscription.id.duplicate", map[string]any{"sub_id": sub.ID}, "duplicate sub id %q", sub.ID)
 		}
 		subIDs[sub.ID] = struct{}{}
 		if sub.Path == "" {
@@ -194,23 +239,23 @@ func (c *Config) validate(opts validateOptions) error {
 		}
 		cleanPath, err := CleanHTTPPath(sub.Path)
 		if err != nil {
-			return fmt.Errorf("sub %q path: %w", sub.ID, err)
+			return CodedErrorf("subscription.path.invalid", map[string]any{"sub_id": sub.ID}, "sub %q path: %v", sub.ID, err)
 		}
 		sub.Path = cleanPath
 		if reserved, ok := reservedHTTPPrefix(sub.Path, opts.ReservedHTTPPrefixes); ok {
-			return fmt.Errorf("sub %q path %q conflicts with reserved path prefix %q", sub.ID, sub.Path, reserved)
+			return CodedErrorf("subscription.path.reserved", map[string]any{"sub_id": sub.ID, "path": sub.Path, "reserved": reserved}, "sub %q path %q conflicts with reserved path prefix %q", sub.ID, sub.Path, reserved)
 		}
 		if _, ok := subPaths[sub.Path]; ok {
-			return fmt.Errorf("duplicate sub path %q", sub.Path)
+			return CodedErrorf("subscription.path.duplicate", map[string]any{"path": sub.Path}, "duplicate sub path %q", sub.Path)
 		}
 		subPaths[sub.Path] = struct{}{}
 		if strings.TrimSpace(sub.AccessCode) != "" {
-			return fmt.Errorf("sub %q access_code plaintext is not supported; use access_code_hash", sub.ID)
+			return CodedErrorf("subscription.access_code.plaintext_unsupported", map[string]any{"sub_id": sub.ID}, "sub %q access_code plaintext is not supported; use access_code_hash", sub.ID)
 		}
 		sub.AccessCodeHash = strings.TrimSpace(sub.AccessCodeHash)
 		if sub.AccessCodeHash != "" {
 			if err := auth.ValidateHash(sub.AccessCodeHash); err != nil {
-				return fmt.Errorf("sub %q access_code_hash must be a valid bcrypt hash", sub.ID)
+				return CodedErrorf("subscription.access_code_hash.invalid", map[string]any{"sub_id": sub.ID}, "sub %q access_code_hash must be a valid bcrypt hash", sub.ID)
 			}
 		}
 		explicitSubSiteKey := strings.TrimSpace(sub.SiteKey) != "" || strings.TrimSpace(sub.TVBox.SiteKey) != ""
@@ -227,14 +272,14 @@ func (c *Config) validate(opts validateOptions) error {
 		sub.SiteKey = sub.TVBox.SiteKey
 		sub.SiteName = sub.TVBox.SiteName
 		if !validID(sub.TVBox.SiteKey) {
-			return fmt.Errorf("sub %q site_key must contain only letters, digits, underscore or dash", sub.ID)
+			return CodedErrorf("subscription.site_key.invalid", map[string]any{"sub_id": sub.ID}, "sub %q site_key must contain only letters, digits, underscore or dash", sub.ID)
 		}
 		if _, ok := subSiteKeys[sub.TVBox.SiteKey]; ok {
-			return fmt.Errorf("duplicate sub site_key %q", sub.TVBox.SiteKey)
+			return CodedErrorf("subscription.site_key.duplicate", map[string]any{"site_key": sub.TVBox.SiteKey}, "duplicate sub site_key %q", sub.TVBox.SiteKey)
 		}
 		subSiteKeys[sub.TVBox.SiteKey] = struct{}{}
 		if len(sub.Mounts) == 0 {
-			return fmt.Errorf("sub %q requires at least one mount", sub.ID)
+			return CodedErrorf("subscription.mount.required", map[string]any{"sub_id": sub.ID}, "sub %q requires at least one mount", sub.ID)
 		}
 		if err := validateLives(sub.ID, sub.Lives); err != nil {
 			return err
@@ -272,50 +317,50 @@ func normalizeBackendAuth(b *Backend) error {
 	switch b.AuthType {
 	case "anonymous":
 		if b.APIKey != "" || b.APIKeyEnv != "" || b.User != "" || b.Password != "" || b.PasswordEnv != "" {
-			return fmt.Errorf("backend %q anonymous auth must not set credential fields", b.ID)
+			return CodedErrorf("backend.auth.credentials_for_anonymous", map[string]any{"backend_id": b.ID}, "backend %q anonymous auth must not set credential fields", b.ID)
 		}
 	case "api_key":
 		if b.User != "" || b.Password != "" || b.PasswordEnv != "" {
-			return fmt.Errorf("backend %q api_key auth must not set password auth fields", b.ID)
+			return CodedErrorf("backend.auth.api_key_password_conflict", map[string]any{"backend_id": b.ID}, "backend %q api_key auth must not set password auth fields", b.ID)
 		}
 		if b.APIKey != "" && b.APIKeyEnv != "" {
-			return fmt.Errorf("backend %q must set only one of api_key or api_key_env", b.ID)
+			return CodedErrorf("backend.secret.multiple_sources", map[string]any{"backend_id": b.ID, "secret": "api_key"}, "backend %q must set only one of api_key or api_key_env", b.ID)
 		}
 		if b.APIKeyEnv != "" {
 			value, ok := os.LookupEnv(b.APIKeyEnv)
 			if !ok {
-				return fmt.Errorf("backend %q api_key_env %q is not set", b.ID, b.APIKeyEnv)
+				return CodedErrorf("backend.env_secret.missing", map[string]any{"backend_id": b.ID, "env": b.APIKeyEnv}, "backend %q api_key_env %q is not set", b.ID, b.APIKeyEnv)
 			}
 			b.APIKey = strings.TrimSpace(value)
 			if b.APIKey == "" {
-				return fmt.Errorf("backend %q api_key_env %q is empty", b.ID, b.APIKeyEnv)
+				return CodedErrorf("backend.env_secret.empty", map[string]any{"backend_id": b.ID, "env": b.APIKeyEnv}, "backend %q api_key_env %q is empty", b.ID, b.APIKeyEnv)
 			}
 		}
 		if b.APIKey == "" {
-			return fmt.Errorf("backend %q api_key auth requires api_key or api_key_env", b.ID)
+			return CodedErrorf("backend.auth.api_key_required", map[string]any{"backend_id": b.ID}, "backend %q api_key auth requires api_key or api_key_env", b.ID)
 		}
 	case "password":
 		if b.APIKey != "" || b.APIKeyEnv != "" {
-			return fmt.Errorf("backend %q password auth must not set api_key or api_key_env", b.ID)
+			return CodedErrorf("backend.auth.password_api_key_conflict", map[string]any{"backend_id": b.ID}, "backend %q password auth must not set api_key or api_key_env", b.ID)
 		}
 		if b.User == "" {
-			return fmt.Errorf("backend %q password auth requires user", b.ID)
+			return CodedErrorf("backend.auth.user_required", map[string]any{"backend_id": b.ID}, "backend %q password auth requires user", b.ID)
 		}
 		if b.Password != "" && b.PasswordEnv != "" {
-			return fmt.Errorf("backend %q must set only one of password or password_env", b.ID)
+			return CodedErrorf("backend.secret.multiple_sources", map[string]any{"backend_id": b.ID, "secret": "password"}, "backend %q must set only one of password or password_env", b.ID)
 		}
 		if b.PasswordEnv != "" {
 			value, ok := os.LookupEnv(b.PasswordEnv)
 			if !ok {
-				return fmt.Errorf("backend %q password_env %q is not set", b.ID, b.PasswordEnv)
+				return CodedErrorf("backend.env_secret.missing", map[string]any{"backend_id": b.ID, "env": b.PasswordEnv}, "backend %q password_env %q is not set", b.ID, b.PasswordEnv)
 			}
 			b.Password = value
 		}
 		if b.Password == "" {
-			return fmt.Errorf("backend %q password auth requires password or password_env", b.ID)
+			return CodedErrorf("backend.auth.password_required", map[string]any{"backend_id": b.ID}, "backend %q password auth requires password or password_env", b.ID)
 		}
 	default:
-		return fmt.Errorf("backend %q auth_type must be one of anonymous, api_key or password", b.ID)
+		return CodedErrorf("backend.auth_type.invalid", map[string]any{"backend_id": b.ID, "auth_type": b.AuthType}, "backend %q auth_type must be one of anonymous, api_key or password", b.ID)
 	}
 	return nil
 }
@@ -332,23 +377,23 @@ func validateLives(subID string, lives []Live) error {
 			live.Name = "Live"
 		}
 		if live.URL == "" {
-			return fmt.Errorf("sub %q live[%d] url is required", subID, i)
+			return CodedErrorf("subscription.live.url_required", map[string]any{"sub_id": subID, "index": i}, "sub %q live[%d] url is required", subID, i)
 		}
 		if live.Type != 0 {
-			return fmt.Errorf("sub %q live[%d] type must be 0", subID, i)
+			return CodedErrorf("subscription.live.type_invalid", map[string]any{"sub_id": subID, "index": i}, "sub %q live[%d] type must be 0", subID, i)
 		}
 		u, err := url.Parse(live.URL)
 		if err != nil || u.Scheme == "" || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-			return fmt.Errorf("sub %q live[%d] url must be an absolute http(s) URL", subID, i)
+			return CodedErrorf("subscription.live.url_invalid", map[string]any{"sub_id": subID, "index": i}, "sub %q live[%d] url must be an absolute http(s) URL", subID, i)
 		}
 		if live.EPG != "" {
 			if u, err := url.Parse(live.EPG); err != nil || u.Scheme == "" || u.Host == "" {
-				return fmt.Errorf("sub %q live[%d] epg must be an absolute URL", subID, i)
+				return CodedErrorf("subscription.live.epg_invalid", map[string]any{"sub_id": subID, "index": i}, "sub %q live[%d] epg must be an absolute URL", subID, i)
 			}
 		}
 		if live.Logo != "" {
 			if u, err := url.Parse(live.Logo); err != nil || u.Scheme == "" || u.Host == "" {
-				return fmt.Errorf("sub %q live[%d] logo must be an absolute URL", subID, i)
+				return CodedErrorf("subscription.live.logo_invalid", map[string]any{"sub_id": subID, "index": i}, "sub %q live[%d] logo must be an absolute URL", subID, i)
 			}
 		}
 	}
@@ -360,26 +405,26 @@ func validateMounts(subID string, mounts []Mount, backendIDs map[string]struct{}
 	for i := range mounts {
 		m := &mounts[i]
 		if !validID(m.ID) {
-			return fmt.Errorf("sub %q mount[%d] id must contain only letters, digits, underscore or dash", subID, i)
+			return CodedErrorf("mount.id.invalid", map[string]any{"sub_id": subID, "index": i}, "sub %q mount[%d] id must contain only letters, digits, underscore or dash", subID, i)
 		}
 		if _, ok := mountIDs[m.ID]; ok {
-			return fmt.Errorf("sub %q duplicate mount id %q", subID, m.ID)
+			return CodedErrorf("mount.id.duplicate", map[string]any{"sub_id": subID, "mount_id": m.ID}, "sub %q duplicate mount id %q", subID, m.ID)
 		}
 		mountIDs[m.ID] = struct{}{}
 		if _, ok := backendIDs[m.Backend]; !ok {
-			return fmt.Errorf("sub %q mount %q references unknown backend %q", subID, m.ID, m.Backend)
+			return CodedErrorf("mount.backend.unknown", map[string]any{"sub_id": subID, "mount_id": m.ID, "backend_id": m.Backend}, "sub %q mount %q references unknown backend %q", subID, m.ID, m.Backend)
 		}
 		if m.Name == "" {
 			m.Name = m.ID
 		}
 		clean, err := CleanMountRoot(m.Path)
 		if err != nil {
-			return fmt.Errorf("sub %q mount %q path: %w", subID, m.ID, err)
+			return CodedErrorf("mount.path.invalid", map[string]any{"sub_id": subID, "mount_id": m.ID}, "sub %q mount %q path: %v", subID, m.ID, err)
 		}
 		m.Path = clean
 		headers, err := NormalizePlayHeaders(m.PlayHeaders)
 		if err != nil {
-			return fmt.Errorf("sub %q mount %q play_headers: %w", subID, m.ID, err)
+			return CodedErrorf("mount.play_headers.invalid", map[string]any{"sub_id": subID, "mount_id": m.ID}, "sub %q mount %q play_headers: %v", subID, m.ID, err)
 		}
 		m.PlayHeaders = headers
 	}

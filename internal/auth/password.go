@@ -9,6 +9,8 @@ import (
 
 const DefaultBcryptCost = 12
 
+var bcryptCost = DefaultBcryptCost
+
 var (
 	ErrEmptyPassword = errors.New("password must not be empty")
 	ErrInvalidCode   = errors.New("access code must be 4 to 12 digits")
@@ -19,7 +21,7 @@ func HashPassword(password string) (string, error) {
 	if err := ValidateAccessCode(password); err != nil {
 		return "", err
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), DefaultBcryptCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	if err != nil {
 		return "", err
 	}
