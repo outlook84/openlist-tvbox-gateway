@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"openlist-tvbox/internal/admin"
-	"openlist-tvbox/internal/auth"
 	"openlist-tvbox/internal/config"
 	"openlist-tvbox/internal/gateway"
 	"openlist-tvbox/internal/mount"
@@ -97,22 +96,19 @@ func TestApplyConfigReloadsGatewayAndAdminTrustXForwardedFor(t *testing.T) {
 	if body := rec.Body.String(); !strings.Contains(body, "Shows") {
 		t.Fatalf("gateway did not use reloaded service: %s", body)
 	}
-	for i := 0; i < auth.DefaultFailureLimit; i++ {
-		req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
-		req.Header.Set("X-Admin-Code", "wrong-code")
-		req.Header.Set("X-Forwarded-For", "198.51.100."+strconv.Itoa(i+1))
-		rec := httptest.NewRecorder()
-		adminHandler.Handler().ServeHTTP(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("attempt %d status = %d body = %s", i+1, rec.Code, rec.Body.String())
-		}
+	loginReq := httptest.NewRequest(http.MethodPost, "http://example.com/admin/login", strings.NewReader(`{"access_code":"123456789012"}`))
+	loginRec := httptest.NewRecorder()
+	adminHandler.Handler().ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d body = %s", loginRec.Code, loginRec.Body.String())
 	}
 	req = httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
-	req.Header.Set("X-Admin-Code", "wrong-code")
-	req.Header.Set("X-Forwarded-For", "198.51.100.250")
+	for _, cookie := range loginRec.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
 	rec = httptest.NewRecorder()
 	adminHandler.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusTooManyRequests {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
 }

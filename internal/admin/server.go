@@ -2,16 +2,19 @@ package admin
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 	"openlist-tvbox/internal/auth"
@@ -24,6 +27,9 @@ const (
 	secretFileName    = "admin_access_code_hash"
 	setupCodeFileName = "admin_setup_code"
 	maxConfigBodySize = 1 << 20
+	sessionCookieName = "openlist_tvbox_admin_session"
+	sessionTTL        = 12 * time.Hour
+	maxAdminSessions  = 128
 )
 
 type Server struct {
@@ -36,8 +42,16 @@ type Server struct {
 	saveMu        sync.Mutex
 	setupMu       sync.Mutex
 	authLimiter   *auth.FailureLimiter
+	sessionMu     sync.Mutex
+	sessions      map[string]adminSession
 	trustMu       sync.RWMutex
 	trustXFF      bool
+	publicBaseURL string
+}
+
+type adminSession struct {
+	CreatedAt time.Time
+	ExpiresAt time.Time
 }
 
 type Options struct {
@@ -53,8 +67,10 @@ func NewServer(opts Options) (*Server, error) {
 		return nil, err
 	}
 	trustXFF := false
+	publicBaseURL := ""
 	if cfg, err := config.Load(opts.ConfigPath); err == nil {
 		trustXFF = cfg.TrustXForwardedFor
+		publicBaseURL = cfg.PublicBaseURL
 	}
 	if opts.Logger != nil {
 		if state.Hash != "" {
@@ -71,19 +87,34 @@ func NewServer(opts Options) (*Server, error) {
 		setupCode:     state.SetupCode,
 		onSaved:       opts.OnSaved,
 		authLimiter:   auth.NewFailureLimiter(auth.DefaultFailureLimit, auth.DefaultFailureCooldown),
+		sessions:      map[string]adminSession{},
 		trustXFF:      trustXFF,
+		publicBaseURL: publicBaseURL,
 	}, nil
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /admin/setup", s.setup)
+	mux.HandleFunc("POST /admin/setup", s.requireSameOrigin(s.setup))
+	mux.HandleFunc("POST /admin/login", s.requireSameOrigin(s.login))
+	mux.HandleFunc("POST /admin/logout", s.requireSameOrigin(s.logout))
+	mux.HandleFunc("GET /admin/session", s.session)
 	mux.HandleFunc("GET /admin/config/meta", s.requireAuth(s.meta))
 	mux.HandleFunc("GET /admin/config", s.requireAuth(s.getConfig))
-	mux.HandleFunc("POST /admin/config/validate", s.requireAuth(s.validateConfig))
-	mux.HandleFunc("PUT /admin/config", s.requireAuth(s.putConfig))
+	mux.HandleFunc("POST /admin/config/validate", s.requireSameOrigin(s.requireAuth(s.validateConfig)))
+	mux.HandleFunc("PUT /admin/config", s.requireSameOrigin(s.requireAuth(s.putConfig)))
 	mux.HandleFunc("/admin/", s.requireAuth(s.notFound))
 	return mux
+}
+
+func (s *Server) requireSameOrigin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.sameOrigin(r) {
+			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "cross-origin admin request rejected"})
+			return
+		}
+		next(w, r)
+	}
 }
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -92,20 +123,10 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "admin setup required"})
 			return
 		}
-		code := adminCodeFromRequest(r)
-		key := s.adminFailureKey(r)
-		if s.authLimiter.Blocked(key) {
-			writeJSON(w, http.StatusTooManyRequests, map[string]any{"ok": false, "error": "too many failed admin authentication attempts"})
-			return
-		}
-		if code == "" || verifyAdminCode(s.adminHash(), code) != nil {
-			if code != "" {
-				s.authLimiter.RecordFailure(key)
-			}
+		if !s.validSession(r) {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
 			return
 		}
-		s.authLimiter.Clear(key)
 		next(w, r)
 	}
 }
@@ -166,10 +187,66 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	s.setupCode = ""
 	s.setupCodePath = ""
 	s.authLimiter.Clear(key)
+	if err := s.issueSessionCookie(w, r); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "admin session failed"})
+		return
+	}
 	if s.logger != nil {
 		s.logger.Info("admin setup completed")
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	if s.adminHash() == "" {
+		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "admin setup required"})
+		return
+	}
+	key := s.adminFailureKey(r)
+	if s.authLimiter.Blocked(key) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"ok": false, "error": "too many failed admin authentication attempts"})
+		return
+	}
+	var req struct {
+		AccessCode string `json:"access_code"`
+	}
+	dec := json.NewDecoder(io.LimitReader(r.Body, maxConfigBodySize+1))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid login json"})
+		return
+	}
+	if verifyAdminCode(s.adminHash(), req.AccessCode) != nil {
+		if req.AccessCode != "" {
+			s.authLimiter.RecordFailure(key)
+		}
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		return
+	}
+	s.authLimiter.Clear(key)
+	if err := s.issueSessionCookie(w, r); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "admin session failed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(sessionCookieName); err == nil {
+		s.sessionMu.Lock()
+		delete(s.sessions, cookie.Value)
+		s.sessionMu.Unlock()
+	}
+	s.clearSessionCookie(w, r)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) session(w http.ResponseWriter, r *http.Request) {
+	if s.adminHash() == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false, "setup_required": true})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"authenticated": s.validSession(r), "setup_required": false})
 }
 
 func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
@@ -256,6 +333,7 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) ApplyConfig(cfg *config.Config) {
 	s.setTrustXForwardedFor(cfg.TrustXForwardedFor)
+	s.setPublicBaseURL(cfg.PublicBaseURL)
 }
 
 func (s *Server) setTrustXForwardedFor(trust bool) {
@@ -268,6 +346,18 @@ func (s *Server) trustXForwardedFor() bool {
 	s.trustMu.RLock()
 	defer s.trustMu.RUnlock()
 	return s.trustXFF
+}
+
+func (s *Server) setPublicBaseURL(baseURL string) {
+	s.trustMu.Lock()
+	defer s.trustMu.Unlock()
+	s.publicBaseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+}
+
+func (s *Server) getPublicBaseURL() string {
+	s.trustMu.RLock()
+	defer s.trustMu.RUnlock()
+	return s.publicBaseURL
 }
 
 func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
@@ -766,13 +856,6 @@ func validateAdminCode(code string) error {
 	return nil
 }
 
-func adminCodeFromRequest(r *http.Request) string {
-	if code := r.Header.Get("X-Admin-Code"); code != "" {
-		return code
-	}
-	return ""
-}
-
 func (s *Server) adminFailureKey(r *http.Request) string {
 	return "admin|" + auth.ClientHost(r, s.trustXForwardedFor())
 }
@@ -787,6 +870,141 @@ func adminURL(listen string) string {
 		host = "127.0.0.1" + host
 	}
 	return "http://" + host + "/admin"
+}
+
+func (s *Server) issueSessionCookie(w http.ResponseWriter, r *http.Request) error {
+	token, err := randomToken(32)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	expires := now.Add(sessionTTL)
+	s.sessionMu.Lock()
+	s.pruneExpiredSessionsLocked(now)
+	s.pruneOldestSessionsLocked(maxAdminSessions - 1)
+	s.sessions[token] = adminSession{CreatedAt: now, ExpiresAt: expires}
+	s.sessionMu.Unlock()
+	http.SetCookie(w, s.sessionCookie(r, token, expires, int(sessionTTL.Seconds())))
+	return nil
+}
+
+func (s *Server) validSession(r *http.Request) bool {
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil || cookie.Value == "" {
+		return false
+	}
+	now := time.Now()
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	session, ok := s.sessions[cookie.Value]
+	if !ok {
+		return false
+	}
+	if !session.ExpiresAt.After(now) {
+		delete(s.sessions, cookie.Value)
+		return false
+	}
+	return true
+}
+
+func (s *Server) pruneExpiredSessionsLocked(now time.Time) {
+	for token, session := range s.sessions {
+		if !session.ExpiresAt.After(now) {
+			delete(s.sessions, token)
+		}
+	}
+}
+
+func (s *Server) pruneOldestSessionsLocked(max int) {
+	for len(s.sessions) > max {
+		var oldestToken string
+		var oldestCreatedAt time.Time
+		for token, session := range s.sessions {
+			if oldestToken == "" || session.CreatedAt.Before(oldestCreatedAt) {
+				oldestToken = token
+				oldestCreatedAt = session.CreatedAt
+			}
+		}
+		delete(s.sessions, oldestToken)
+	}
+}
+
+func randomToken(length int) (string, error) {
+	buf := make([]byte, length)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+func (s *Server) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, s.sessionCookie(r, "", time.Unix(0, 0), -1))
+}
+
+func (s *Server) sessionCookie(r *http.Request, value string, expires time.Time, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    value,
+		Path:     "/admin",
+		Expires:  expires,
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   s.sessionCookieSecure(r),
+		SameSite: http.SameSiteStrictMode,
+	}
+}
+
+func (s *Server) sessionCookieSecure(r *http.Request) bool {
+	if baseURL := s.getPublicBaseURL(); baseURL != "" {
+		u, err := url.Parse(baseURL)
+		if err == nil && strings.EqualFold(u.Scheme, "https") {
+			return true
+		}
+	}
+	return s.requestIsHTTPS(r)
+}
+
+func (s *Server) requestIsHTTPS(r *http.Request) bool {
+	return r.TLS != nil || (s.trustXForwardedFor() && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"))
+}
+
+func (s *Server) sameOrigin(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin != "" {
+		return s.originMatchesRequest(r, origin)
+	}
+	referer := strings.TrimSpace(r.Header.Get("Referer"))
+	if referer != "" {
+		return s.originMatchesRequest(r, referer)
+	}
+	return true
+}
+
+func (s *Server) originMatchesRequest(r *http.Request, raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return false
+	}
+	want, err := url.Parse(s.adminBaseURL(r))
+	if err != nil || want.Scheme == "" || want.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Scheme, want.Scheme) && strings.EqualFold(u.Host, want.Host)
+}
+
+func (s *Server) adminBaseURL(r *http.Request) string {
+	if baseURL := s.getPublicBaseURL(); baseURL != "" {
+		return baseURL
+	}
+	scheme := "http"
+	if s.requestIsHTTPS(r) {
+		scheme = "https"
+	}
+	host := r.Host
+	if host == "" {
+		host = "localhost"
+	}
+	return scheme + "://" + host
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

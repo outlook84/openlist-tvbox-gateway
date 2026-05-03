@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"openlist-tvbox/internal/auth"
 	"openlist-tvbox/internal/config"
@@ -84,7 +85,6 @@ func TestAdminSetupInitializesAccessCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
-	req.Header.Set("X-Admin-Code", "123456789012")
 	blockedRec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(blockedRec, req)
 	if blockedRec.Code != http.StatusForbidden {
@@ -107,13 +107,236 @@ func TestAdminSetupInitializesAccessCode(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(filepath.Dir(path), secretFileName)); err != nil {
 		t.Fatal(err)
 	}
+	cookie := adminSessionCookieFrom(t, setupRec)
 
 	authedReq := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
-	authedReq.Header.Set("X-Admin-Code", "123456789012")
+	authedReq.AddCookie(cookie)
 	authedRec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(authedRec, authedReq)
 	if authedRec.Code != http.StatusOK {
 		t.Fatalf("authed status = %d body = %s", authedRec.Code, authedRec.Body.String())
+	}
+}
+
+func TestAdminLoginIssuesSessionCookie(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cookie := loginAdmin(t, server, "123456789012")
+	if !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode || cookie.Path != "/admin" {
+		t.Fatalf("weak session cookie attributes: %#v", cookie)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/session", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"authenticated":true`) {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminLogoutClearsSession(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	logoutReq := httptest.NewRequest(http.MethodPost, "http://example.com/admin/logout", nil)
+	logoutReq.AddCookie(cookie)
+	logoutRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(logoutRec, logoutReq)
+	if logoutRec.Code != http.StatusOK {
+		t.Fatalf("logout status = %d body = %s", logoutRec.Code, logoutRec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminWriteRejectsCrossOrigin(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/config/validate", strings.NewReader(`{"backends":[],"subs":[]}`))
+	req.Header.Set("Origin", "http://evil.example.com")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminWriteAllowsSameOriginReferer(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/config/validate", strings.NewReader(`{"backends":[{"id":"b1","server":"https://openlist.example.com"}],"subs":[]}`))
+	req.Header.Set("Referer", "http://example.com/admin/")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminOriginUsesPublicBaseURL(t *testing.T) {
+	path := writeAdminConfig(t, `{
+  "public_base_url": "https://public.example.com",
+  "backends": [
+    {"id":"b1","server":"https://openlist.example.com","auth_type":"api_key","api_key":"old-secret"}
+  ],
+  "subs": []
+}`)
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	req := httptest.NewRequest(http.MethodPost, "http://internal.example.com/admin/config/validate", strings.NewReader(`{"backends":[{"id":"b1","server":"https://openlist.example.com"}],"subs":[]}`))
+	req.Header.Set("Origin", "https://public.example.com")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminSecureCookieUsesHTTPSPublicBaseURL(t *testing.T) {
+	path := writeAdminConfig(t, `{
+  "public_base_url": "https://public.example.com",
+  "backends": [
+    {"id":"b1","server":"https://openlist.example.com","auth_type":"api_key","api_key":"old-secret"}
+  ],
+  "subs": []
+}`)
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://internal.example.com/admin/login", strings.NewReader(`{"access_code":"123456789012"}`))
+	req.Header.Set("Origin", "https://public.example.com")
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	cookie := adminSessionCookieFrom(t, rec)
+	if !cookie.Secure {
+		t.Fatalf("cookie should be secure when public_base_url is HTTPS: %#v", cookie)
+	}
+}
+
+func TestAdminSecureCookieRequiresTrustedForwardedProto(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/login", strings.NewReader(`{"access_code":"123456789012"}`))
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	cookie := adminSessionCookieFrom(t, rec)
+	if cookie.Secure {
+		t.Fatalf("cookie should not trust X-Forwarded-Proto by default: %#v", cookie)
+	}
+
+	server.setTrustXForwardedFor(true)
+	req = httptest.NewRequest(http.MethodPost, "http://example.com/admin/login", strings.NewReader(`{"access_code":"123456789012"}`))
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	cookie = adminSessionCookieFrom(t, rec)
+	if !cookie.Secure {
+		t.Fatalf("cookie should be secure behind trusted HTTPS proxy: %#v", cookie)
+	}
+}
+
+func TestAdminPrunesExpiredSessionsOnLogin(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.sessionMu.Lock()
+	server.sessions["expired"] = adminSession{ExpiresAt: time.Now().Add(-time.Minute)}
+	server.sessionMu.Unlock()
+
+	loginAdmin(t, server, "123456789012")
+
+	server.sessionMu.Lock()
+	_, expiredExists := server.sessions["expired"]
+	sessionCount := len(server.sessions)
+	server.sessionMu.Unlock()
+	if expiredExists || sessionCount != 1 {
+		t.Fatalf("sessions = %#v expiredExists = %v count = %d", server.sessions, expiredExists, sessionCount)
+	}
+}
+
+func TestAdminSessionsAreBounded(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstCookie := loginAdmin(t, server, "123456789012")
+	var latestCookie *http.Cookie
+	for range maxAdminSessions {
+		latestCookie = loginAdmin(t, server, "123456789012")
+	}
+
+	server.sessionMu.Lock()
+	sessionCount := len(server.sessions)
+	server.sessionMu.Unlock()
+	if sessionCount != maxAdminSessions {
+		t.Fatalf("session count = %d, want %d", sessionCount, maxAdminSessions)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
+	req.AddCookie(firstCookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("oldest session status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
+	req.AddCookie(latestCookie)
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("latest session status = %d body = %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -150,8 +373,9 @@ func TestGetConfigRedactsSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cookie := loginAdmin(t, server, "123456789012")
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config", nil)
-	req.Header.Set("X-Admin-Code", "123456789012")
+	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(rec, req)
@@ -176,6 +400,7 @@ func TestPutConfigKeepsAndReplacesSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cookie := loginAdmin(t, server, "123456789012")
 	body := `{
   "backends": [
     {"id":"b1","server":"https://openlist.example.com","auth_type":"api_key","api_key_action":"keep"},
@@ -184,7 +409,7 @@ func TestPutConfigKeepsAndReplacesSecrets(t *testing.T) {
   "subs": []
 }`
 	req := httptest.NewRequest(http.MethodPut, "http://example.com/admin/config", strings.NewReader(body))
-	req.Header.Set("X-Admin-Code", "123456789012")
+	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(rec, req)
@@ -215,6 +440,7 @@ func TestPutConfigAllowsAsterisksInReplacedSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cookie := loginAdmin(t, server, "123456789012")
 	body := `{
   "backends": [
     {"id":"b1","server":"https://openlist.example.com","auth_type":"api_key","api_key_action":"replace","api_key":"new*api*key"},
@@ -225,7 +451,7 @@ func TestPutConfigAllowsAsterisksInReplacedSecrets(t *testing.T) {
   ]
 }`
 	req := httptest.NewRequest(http.MethodPut, "http://example.com/admin/config", strings.NewReader(body))
-	req.Header.Set("X-Admin-Code", "123456789012")
+	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(rec, req)
@@ -252,12 +478,13 @@ func TestPutConfigReusesSingleBackupForConsecutiveSaves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cookie := loginAdmin(t, server, "123456789012")
 	first := `{"backends":[{"id":"b1","server":"https://openlist.example.com","auth_type":"api_key","api_key":"first-secret"}],"subs":[]}`
 	second := `{"backends":[{"id":"b1","server":"https://openlist.example.com","auth_type":"api_key","api_key":"second-secret"}],"subs":[]}`
 
 	for _, body := range []string{first, second} {
 		req := httptest.NewRequest(http.MethodPut, "http://example.com/admin/config", strings.NewReader(body))
-		req.Header.Set("X-Admin-Code", "123456789012")
+		req.AddCookie(cookie)
 		rec := httptest.NewRecorder()
 		server.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
@@ -288,8 +515,9 @@ func TestPutConfigAcceptsRedactedGetResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cookie := loginAdmin(t, server, "123456789012")
 	getReq := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config", nil)
-	getReq.Header.Set("X-Admin-Code", "123456789012")
+	getReq.AddCookie(cookie)
 	getRec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(getRec, getReq)
 	if getRec.Code != http.StatusOK {
@@ -297,7 +525,7 @@ func TestPutConfigAcceptsRedactedGetResponse(t *testing.T) {
 	}
 
 	putReq := httptest.NewRequest(http.MethodPut, "http://example.com/admin/config", strings.NewReader(getRec.Body.String()))
-	putReq.Header.Set("X-Admin-Code", "123456789012")
+	putReq.AddCookie(cookie)
 	putRec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(putRec, putReq)
 
@@ -320,8 +548,9 @@ func TestValidateConfigAcceptsRedactedGetResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cookie := loginAdmin(t, server, "123456789012")
 	getReq := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config", nil)
-	getReq.Header.Set("X-Admin-Code", "123456789012")
+	getReq.AddCookie(cookie)
 	getRec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(getRec, getReq)
 	if getRec.Code != http.StatusOK {
@@ -329,7 +558,7 @@ func TestValidateConfigAcceptsRedactedGetResponse(t *testing.T) {
 	}
 
 	validateReq := httptest.NewRequest(http.MethodPost, "http://example.com/admin/config/validate", strings.NewReader(getRec.Body.String()))
-	validateReq.Header.Set("X-Admin-Code", "123456789012")
+	validateReq.AddCookie(cookie)
 	validateRec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(validateRec, validateReq)
 
@@ -357,6 +586,7 @@ func TestPutConfigKeepsEnvBackedSecretsWithoutPersistingResolvedValues(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
+	cookie := loginAdmin(t, server, "123456789012")
 	body := `{
   "backends": [
     {"id":"api","server":"https://api.example.com","auth_type":"api_key","api_key_env":"OPENLIST_TEST_API_KEY","api_key_action":"keep"},
@@ -365,7 +595,7 @@ func TestPutConfigKeepsEnvBackedSecretsWithoutPersistingResolvedValues(t *testin
   "subs": []
 }`
 	req := httptest.NewRequest(http.MethodPut, "http://example.com/admin/config", strings.NewReader(body))
-	req.Header.Set("X-Admin-Code", "123456789012")
+	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(rec, req)
@@ -434,6 +664,24 @@ func TestAdminRejectsCodeQueryParameter(t *testing.T) {
 	}
 }
 
+func TestAdminRejectsCodeHeader(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
+	req.Header.Set("X-Admin-Code", "123456789012")
+	rec := httptest.NewRecorder()
+
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAdminAuthCoolsDownAfterFailures(t *testing.T) {
 	path := writeAdminConfig(t, testJSONConfig("old-secret"))
 	t.Setenv(envAdminCode, "123456789012")
@@ -443,8 +691,7 @@ func TestAdminAuthCoolsDownAfterFailures(t *testing.T) {
 	}
 
 	for i := 0; i < auth.DefaultFailureLimit; i++ {
-		req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
-		req.Header.Set("X-Admin-Code", "wrong-code")
+		req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/login", strings.NewReader(`{"access_code":"wrong-code"}`))
 		rec := httptest.NewRecorder()
 		server.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusUnauthorized {
@@ -452,8 +699,7 @@ func TestAdminAuthCoolsDownAfterFailures(t *testing.T) {
 		}
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
-	req.Header.Set("X-Admin-Code", "wrong-code")
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/login", strings.NewReader(`{"access_code":"wrong-code"}`))
 	rec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusTooManyRequests {
@@ -470,8 +716,7 @@ func TestAdminAuthCooldownIgnoresForwardedForByDefault(t *testing.T) {
 	}
 
 	for i := 0; i < auth.DefaultFailureLimit; i++ {
-		req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
-		req.Header.Set("X-Admin-Code", "wrong-code")
+		req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/login", strings.NewReader(`{"access_code":"wrong-code"}`))
 		req.Header.Set("X-Forwarded-For", "198.51.100."+strconv.Itoa(i+1))
 		rec := httptest.NewRecorder()
 		server.Handler().ServeHTTP(rec, req)
@@ -480,8 +725,7 @@ func TestAdminAuthCooldownIgnoresForwardedForByDefault(t *testing.T) {
 		}
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
-	req.Header.Set("X-Admin-Code", "wrong-code")
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/login", strings.NewReader(`{"access_code":"wrong-code"}`))
 	req.Header.Set("X-Forwarded-For", "198.51.100.250")
 	rec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
@@ -499,8 +743,7 @@ func TestAdminAuthCooldownCanTrustForwardedFor(t *testing.T) {
 	}
 
 	for i := 0; i < auth.DefaultFailureLimit; i++ {
-		req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
-		req.Header.Set("X-Admin-Code", "wrong-code")
+		req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/login", strings.NewReader(`{"access_code":"wrong-code"}`))
 		req.Header.Set("X-Forwarded-For", "198.51.100."+strconv.Itoa(i+1))
 		rec := httptest.NewRecorder()
 		server.Handler().ServeHTTP(rec, req)
@@ -509,8 +752,7 @@ func TestAdminAuthCooldownCanTrustForwardedFor(t *testing.T) {
 		}
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
-	req.Header.Set("X-Admin-Code", "wrong-code")
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/login", strings.NewReader(`{"access_code":"wrong-code"}`))
 	req.Header.Set("X-Forwarded-For", "198.51.100.250")
 	rec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
@@ -526,8 +768,9 @@ func TestValidateAllowsEmptySubs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cookie := loginAdmin(t, server, "123456789012")
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/config/validate", strings.NewReader(`{"backends":[{"id":"b1","server":"https://openlist.example.com"}],"subs":[]}`))
-	req.Header.Set("X-Admin-Code", "123456789012")
+	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(rec, req)
@@ -548,12 +791,13 @@ func TestValidateRejectsAdminSubPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cookie := loginAdmin(t, server, "123456789012")
 	body := `{
   "backends": [{"id":"b1","server":"https://openlist.example.com"}],
   "subs": [{"id":"admin","path":"/admin/config","mounts":[{"id":"m1","backend":"b1","path":"/"}]}]
 }`
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/config/validate", strings.NewReader(body))
-	req.Header.Set("X-Admin-Code", "123456789012")
+	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(rec, req)
@@ -577,6 +821,28 @@ func writeAdminConfig(t *testing.T, content string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func loginAdmin(t *testing.T, server *Server, code string) *http.Cookie {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/login", strings.NewReader(`{"access_code":"`+code+`"}`))
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	return adminSessionCookieFrom(t, rec)
+}
+
+func adminSessionCookieFrom(t *testing.T, rec *httptest.ResponseRecorder) *http.Cookie {
+	t.Helper()
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == sessionCookieName {
+			return cookie
+		}
+	}
+	t.Fatalf("missing %s cookie in Set-Cookie: %v", sessionCookieName, rec.Result().Header.Values("Set-Cookie"))
+	return nil
 }
 
 func testJSONConfig(apiKey string) string {
