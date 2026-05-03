@@ -382,6 +382,13 @@ button.menu-item.active {
   gap: 4px;
 }
 
+.sub-link-url {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .sub-link code {
   background: var(--color-surface);
   border: 1px solid var(--color-border-muted);
@@ -394,6 +401,10 @@ button.menu-item.active {
   padding: 8px 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sub-link-url .icon {
+  flex: 0 0 auto;
 }
 
 .empty-state {

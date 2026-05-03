@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, CircleHelp, Languages, LogOut, Plus, RotateCcw, Save, ShieldCheck, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, CircleHelp, Clipboard, Languages, LogOut, Plus, RotateCcw, Save, ShieldCheck, Trash2 } from "lucide-react";
 import { getConfig, getMeta, getSession, login, logout, saveConfig, setupAdmin, updateAdminAccessCode, validateConfig } from "./api";
 import { APIError, type AdminConfig, type Backend, type ConfigMeta, type ErrorParams, type Mount, type SecretAction, type SessionState, type Subscription } from "./types";
 import { detectLanguage, languageNames, saveLanguage, translate, type Language, type MessageKey } from "./i18n";
@@ -609,8 +609,17 @@ function SubscriptionLinks({ config, t }: { config: AdminConfig; t: T }) {
 }
 
 function SubLink({ sub, baseURL, t, compact = false }: { sub: Subscription; baseURL: string; t: T; compact?: boolean }) {
+  const [copied, setCopied] = useState(false);
   const path = sub.path || "";
   const url = publicURL(baseURL, path);
+  const displayURL = url || path || t("pathNotSet");
+
+  async function copyURL() {
+    if (!url) return;
+    await copyText(url);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1400);
+  }
 
   return (
     <div className={compact ? "sub-link compact" : "sub-link"}>
@@ -618,7 +627,12 @@ function SubLink({ sub, baseURL, t, compact = false }: { sub: Subscription; base
         <span className="label">{sub.id || t("subscription")}</span>
         <span className="muted">{sub.mounts.length} {t("mounts")}</span>
       </div>
-      <code>{url || path || t("pathNotSet")}</code>
+      <div className="sub-link-url">
+        <code>{displayURL}</code>
+        <button type="button" className={copied ? "icon active" : "icon"} aria-label={t("copySubscriptionLink")} title={copied ? t("copied") : t("copySubscriptionLink")} onClick={copyURL} disabled={!url}>
+          {copied ? <Check size={16} /> : <Clipboard size={16} />}
+        </button>
+      </div>
     </div>
   );
 }
@@ -1101,10 +1115,42 @@ function parseOptionalInt(value: string) {
 }
 
 function publicURL(baseURL: string, path: string) {
-  if (!baseURL.trim()) {
+  if (!path) {
+    return "";
+  }
+  const suffix = path.startsWith("/") ? path : `/${path}`;
+  const trimmedBase = baseURL.trim();
+  if (!trimmedBase) {
+    return `${window.location.origin}${suffix}`;
+  }
+  if (!isAbsoluteHTTPURL(trimmedBase)) {
     return path;
   }
-  const base = baseURL.trim().replace(/\/+$/, "");
-  const suffix = path.startsWith("/") ? path : `/${path}`;
+  const base = trimmedBase.replace(/\/+$/, "");
   return `${base}${suffix}`;
+}
+
+function isAbsoluteHTTPURL(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+async function copyText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const input = document.createElement("textarea");
+  input.value = text;
+  input.setAttribute("readonly", "");
+  input.style.position = "fixed";
+  input.style.left = "-9999px";
+  document.body.append(input);
+  input.select();
+  document.execCommand("copy");
+  input.remove();
 }
