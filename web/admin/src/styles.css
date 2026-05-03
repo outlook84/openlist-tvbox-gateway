@@ -167,15 +167,22 @@ p {
 .app-shell {
   margin: 0 auto;
   max-width: 1320px;
-  padding: 24px;
+  padding: 0 24px 24px;
 }
 
 .topbar {
   align-items: center;
+  backdrop-filter: blur(10px);
+  background: rgb(248 251 255 / 92%);
+  border-bottom: 1px solid var(--color-border-muted);
   display: flex;
   gap: 20px;
   justify-content: space-between;
   margin-bottom: 18px;
+  min-height: 66px;
+  position: sticky;
+  top: 0;
+  z-index: 30;
 }
 
 .topbar h1 {
@@ -663,7 +670,7 @@ button.help-button:focus-visible {
 
 @media (max-width: 560px) {
   .app-shell {
-    padding: 20px;
+    padding: 0 20px 20px;
   }
 
   .topbar h1 {
