@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, CircleHelp, Clipboard, Languages, LogOut, Pencil, Plus, RotateCcw, Save, ShieldCheck, Trash2, TvMinimalPlay } from "lucide-react";
 import { getConfig, getMeta, getSession, login, logout, saveConfig, setupAdmin, updateAdminAccessCode, validateConfig } from "./api";
-import { APIError, type AdminConfig, type Backend, type ConfigMeta, type ErrorParams, type Mount, type SecretAction, type SessionState, type Subscription } from "./types";
+import { APIError, type AdminConfig, type Backend, type ConfigMeta, type ErrorParams, type Live, type Mount, type SecretAction, type SessionState, type Subscription } from "./types";
 import { detectLanguage, languageNames, saveLanguage, translate, type Language, type MessageKey } from "./i18n";
 
 const emptyConfig: AdminConfig = { backends: [], subs: [], tvbox: {} };
@@ -422,9 +422,12 @@ function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
   const backendIDs = useMemo(() => config.backends.map((backend) => backend.id).filter(Boolean), [config.backends]);
   const subRows = useStableRowKeys("sub-row", config.subs.length);
   const mountRows = useRef<Record<string, string[]>>({});
+  const liveRows = useRef<Record<string, string[]>>({});
   const nextMountRowID = useRef(1);
+  const nextLiveRowID = useRef(1);
   const [newSubRows, setNewSubRows] = useState<Set<string>>(() => new Set());
   const [newMountRows, setNewMountRows] = useState<Set<string>>(() => new Set());
+  const [newLiveRows, setNewLiveRows] = useState<Set<string>>(() => new Set());
 
   function getMountRows(subRowKey: string, length: number) {
     const keys = mountRows.current[subRowKey] || [];
@@ -436,6 +439,19 @@ function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
       keys.length = length;
     }
     mountRows.current[subRowKey] = keys;
+    return keys;
+  }
+
+  function getLiveRows(subRowKey: string, length: number) {
+    const keys = liveRows.current[subRowKey] || [];
+    while (keys.length < length) {
+      keys.push(`live-row-${nextLiveRowID.current}`);
+      nextLiveRowID.current += 1;
+    }
+    if (keys.length > length) {
+      keys.length = length;
+    }
+    liveRows.current[subRowKey] = keys;
     return keys;
   }
 
@@ -457,6 +473,7 @@ function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
     const rowKey = subRows.keys[index];
     subRows.remove(index);
     delete mountRows.current[rowKey];
+    delete liveRows.current[rowKey];
     setNewSubRows((current) => {
       const next = new Set(current);
       next.delete(rowKey);
@@ -477,6 +494,41 @@ function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
     updateSub(subIndex, {
       mounts: [...sub.mounts, { id, name: id, backend: backendIDs[0] || "", path: "/", search: true, refresh: false, hidden: false }],
     });
+  }
+
+  function addLive(subIndex: number) {
+    const sub = config.subs[subIndex];
+    const subRowKey = subRows.keys[subIndex];
+    const liveRowKeys = getLiveRows(subRowKey, sub.lives?.length || 0);
+    const liveRowKey = `live-row-${nextLiveRowID.current}`;
+    nextLiveRowID.current += 1;
+    liveRowKeys.push(liveRowKey);
+    setNewLiveRows((current) => new Set(current).add(liveRowKey));
+    updateSub(subIndex, {
+      lives: [...(sub.lives || []), { name: "Live", type: 0, url: "" }],
+    });
+  }
+
+  function updateLive(subIndex: number, liveIndex: number, patch: Partial<Live>) {
+    const sub = config.subs[subIndex];
+    updateSub(subIndex, {
+      lives: (sub.lives || []).map((live, i) => (i === liveIndex ? { ...live, ...patch } : live)),
+    });
+  }
+
+  function removeLive(subIndex: number, liveIndex: number) {
+    const sub = config.subs[subIndex];
+    const lives = sub.lives || [];
+    const subRowKey = subRows.keys[subIndex];
+    const liveRowKeys = getLiveRows(subRowKey, lives.length);
+    const liveRowKey = liveRowKeys[liveIndex];
+    liveRowKeys.splice(liveIndex, 1);
+    setNewLiveRows((current) => {
+      const next = new Set(current);
+      next.delete(liveRowKey);
+      return next;
+    });
+    updateSub(subIndex, { lives: lives.filter((_, i) => i !== liveIndex) });
   }
 
   function updateMount(subIndex: number, mountIndex: number, patch: Partial<Mount>) {
@@ -522,6 +574,47 @@ function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
           </div>
           <SecretHashField sub={sub} onChange={(patch) => updateSub(subIndex, patch)} t={t} />
           <div className="mount-head">
+            <h3>{t("lives")}</h3>
+            <button type="button" className="small" onClick={() => addLive(subIndex)}>
+              <Plus size={16} /> {t("live")}
+            </button>
+          </div>
+          {(sub.lives || []).map((live, liveIndex) => {
+            const liveRowKeys = getLiveRows(subRows.keys[subIndex], sub.lives?.length || 0);
+            const liveRowKey = liveRowKeys[liveIndex];
+            return (
+              <CollapsibleMount
+                title={live.name || t("live")}
+                onRemove={() => removeLive(subIndex, liveIndex)}
+                defaultOpen={newLiveRows.has(liveRowKey)}
+                removeLabel={t("removeLive")}
+                t={t}
+                key={liveRowKey}
+              >
+                <div className="form-grid">
+                  <Field label={t("name")} help={t("helpLiveName")}>
+                    <input value={live.name || ""} onChange={(event) => updateLive(subIndex, liveIndex, { name: event.target.value })} autoComplete="off" name={`live-name-${sub.id || subIndex}-${liveIndex}`} />
+                  </Field>
+                  <Field label={t("liveURL")} help={t("helpLiveURL")}>
+                    <input value={live.url || ""} onChange={(event) => updateLive(subIndex, liveIndex, { url: event.target.value })} autoComplete="off" name={`live-url-${sub.id || subIndex}-${liveIndex}`} />
+                  </Field>
+                  <Field label={t("liveType")} help={t("helpLiveType")}>
+                    <input type="number" min="0" value={live.type ?? 0} onChange={(event) => updateLive(subIndex, liveIndex, { type: parseOptionalInt(event.target.value) ?? 0 })} autoComplete="off" name={`live-type-${sub.id || subIndex}-${liveIndex}`} />
+                  </Field>
+                  <Field label={t("epg")} help={t("helpEPG")}>
+                    <input value={live.epg || ""} onChange={(event) => updateLive(subIndex, liveIndex, { epg: event.target.value })} autoComplete="off" name={`live-epg-${sub.id || subIndex}-${liveIndex}`} />
+                  </Field>
+                  <Field label={t("icon")} help={t("helpIcon")}>
+                    <input value={live.logo || ""} onChange={(event) => updateLive(subIndex, liveIndex, { logo: event.target.value })} autoComplete="off" name={`live-logo-${sub.id || subIndex}-${liveIndex}`} />
+                  </Field>
+                  <Field label={t("userAgent")} help={t("helpLiveUA")}>
+                    <input value={live.ua || ""} onChange={(event) => updateLive(subIndex, liveIndex, { ua: event.target.value })} autoComplete="off" name={`live-ua-${sub.id || subIndex}-${liveIndex}`} />
+                  </Field>
+                </div>
+              </CollapsibleMount>
+            );
+          })}
+          <div className="mount-head">
             <h3>{t("mounts")}</h3>
             <button type="button" className="small" onClick={() => addMount(subIndex)}>
               <Plus size={16} /> {t("mount")}
@@ -535,6 +628,7 @@ function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
                 title={mount.name || mount.id || t("mount")}
                 onRemove={() => removeMount(subIndex, mountIndex)}
                 defaultOpen={newMountRows.has(mountRowKey)}
+                removeLabel={t("removeMount")}
                 t={t}
                 key={mountRowKey}
               >
@@ -577,12 +671,14 @@ function CollapsibleMount({
   title,
   onRemove,
   defaultOpen = false,
+  removeLabel,
   t,
   children,
 }: {
   title: string;
   onRemove: () => void;
   defaultOpen?: boolean;
+  removeLabel: string;
   t: T;
   children: React.ReactNode;
 }) {
@@ -595,7 +691,7 @@ function CollapsibleMount({
           {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
           <span>{title}</span>
         </button>
-        <button type="button" className="icon danger" aria-label={t("removeMount")} title={t("removeMount")} onClick={onRemove}>
+        <button type="button" className="icon danger" aria-label={removeLabel} title={removeLabel} onClick={onRemove}>
           <Trash2 size={16} />
         </button>
       </div>
@@ -940,7 +1036,7 @@ function normalizeConfig(config: AdminConfig): AdminConfig {
     ...config,
     tvbox: config.tvbox || {},
     backends: (config.backends || []).map(normalizeBackend),
-    subs: (config.subs || []).map((sub) => ({ ...sub, mounts: sub.mounts || [], access_code: "", access_code_hash_action: sub.access_code_hash_action || "keep" })),
+    subs: (config.subs || []).map((sub) => ({ ...sub, lives: sub.lives || [], mounts: sub.mounts || [], access_code: "", access_code_hash_action: sub.access_code_hash_action || "keep" })),
   };
 }
 
