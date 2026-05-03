@@ -9,18 +9,20 @@
     "build:admin": "vite build web/admin --outDir ../../internal/admin/assets --emptyOutDir && node scripts/ensure-admin-placeholder.mjs",
     "build": "pnpm build:spider && pnpm build:admin",
     "build:go": "pnpm build && node scripts/build-go.mjs",
+    "test:ts": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0",
-    "lucide-static": "^1.14.0",
-    "@vitejs/plugin-react": "^5.0.0",
-    "vite": "^7.0.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "lucide-react": "^0.468.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "typescript": "^5.8.0"
+    "@vitejs/plugin-react": "^5.0.0",
+    "esbuild": "^0.25.0",
+    "lucide-react": "^0.468.0",
+    "lucide-static": "^1.14.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0",
+    "vitest": "^4.1.5"
   }
 }
