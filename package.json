@@ -6,7 +6,7 @@
   "scripts": {
     "build:icons": "node scripts/build-icons.mjs",
     "build:spider": "esbuild ././tvbox/src/index.ts --bundle --format=esm --target=es2020 --outfile=internal/gateway/assets/openlist-tvbox.js",
-    "build:admin": "vite build web/admin --outDir ../../internal/admin/assets --emptyOutDir",
+    "build:admin": "vite build web/admin --outDir ../../internal/admin/assets --emptyOutDir && node scripts/ensure-admin-placeholder.mjs",
     "build": "pnpm build:spider && pnpm build:admin",
     "build:go": "pnpm build && node scripts/build-go.mjs",
     "typecheck": "tsc --noEmit"

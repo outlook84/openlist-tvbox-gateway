@@ -303,7 +303,38 @@ func TestProtectedSubSubscriptionIsPublicButAPIRequiresCode(t *testing.T) {
 	}
 }
 
-func TestProtectedSubAPIAcceptsAccessCode(t *testing.T) {
+func TestProtectedSubAPIAcceptsAccessToken(t *testing.T) {
+	cfg := testGatewayConfig(t)
+	cfg.Subs[1].AccessCodeHash = mustHash(t, "123456")
+	handler := NewServer(mount.NewService(cfg, fakeOpenListClient{}, nil), nil)
+	token := authenticateSub(t, handler, "shows", "123456")
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.example.com/s/shows/api/tvbox/home", nil)
+	req.Header.Set("X-Access-Token", token)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProtectedSubAPIRejectsAccessTokenInURL(t *testing.T) {
+	cfg := testGatewayConfig(t)
+	cfg.Subs[1].AccessCodeHash = mustHash(t, "123456")
+	handler := NewServer(mount.NewService(cfg, fakeOpenListClient{}, nil), nil)
+	token := authenticateSub(t, handler, "shows", "123456")
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.example.com/s/shows/api/tvbox/home?access_token="+token, nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProtectedSubAPIRejectsAccessCodeOnResourceRequest(t *testing.T) {
 	cfg := testGatewayConfig(t)
 	cfg.Subs[1].AccessCodeHash = mustHash(t, "123456")
 	handler := NewServer(mount.NewService(cfg, fakeOpenListClient{}, nil), nil)
@@ -312,7 +343,26 @@ func TestProtectedSubAPIAcceptsAccessCode(t *testing.T) {
 
 	handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProtectedSubAccessTokenInvalidAfterAccessCodeChange(t *testing.T) {
+	cfg := testGatewayConfig(t)
+	cfg.Subs[1].AccessCodeHash = mustHash(t, "123456")
+	handler := NewServer(mount.NewService(cfg, fakeOpenListClient{}, nil), nil)
+	token := authenticateSub(t, handler, "shows", "123456")
+
+	next := testGatewayConfig(t)
+	next.Subs[1].AccessCodeHash = mustHash(t, "654321")
+	handler.SetService(mount.NewService(next, fakeOpenListClient{}, nil))
+
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.example.com/s/shows/api/tvbox/home", nil)
+	req.Header.Set("X-Access-Token", token)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
 }
@@ -492,6 +542,9 @@ func TestAuthEndpointAcceptsJSONCode(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"ok":true`) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), `"access_token"`) || !strings.Contains(rec.Body.String(), `"expires_at"`) {
+		t.Fatalf("missing token response: %s", rec.Body.String())
+	}
 }
 
 func TestAuthEndpointCoolsDownAfterFailures(t *testing.T) {
@@ -622,6 +675,27 @@ func mustHash(t *testing.T, password string) string {
 		t.Fatal(err)
 	}
 	return hash
+}
+
+func authenticateSub(t *testing.T, handler http.Handler, subID, code string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "http://gateway.example.com/api/sub/"+subID+"/auth", strings.NewReader(`{"code":"`+code+`"}`))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("auth status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		AccessToken string `json:"access_token"`
+		ExpiresAt   int64  `json:"expires_at"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.AccessToken == "" || got.ExpiresAt <= time.Now().Unix() {
+		t.Fatalf("invalid auth token response: %s", rec.Body.String())
+	}
+	return got.AccessToken
 }
 
 type recordingGatewayClient struct {

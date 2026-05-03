@@ -2,7 +2,11 @@ package gateway
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,21 +51,28 @@ type Server struct {
 	mux         *http.ServeMux
 	httpClient  *http.Client
 	authLimiter *auth.FailureLimiter
+	tokenSecret []byte
 }
 
 const (
 	authFailureLimit        = auth.DefaultFailureLimit
 	authCooldown            = auth.DefaultFailureCooldown
+	accessTokenTTL          = 12 * time.Hour
 	liveProxyTimeout        = 20 * time.Second
 	maxLivePlaylistBodySize = 32 << 20
 )
 
 func NewServer(service *mount.Service, logger *slog.Logger) *Server {
+	tokenSecret := make([]byte, 32)
+	if _, err := rand.Read(tokenSecret); err != nil {
+		panic(fmt.Errorf("generate access token secret: %w", err))
+	}
 	s := &Server{
 		logger:      logger,
 		mux:         http.NewServeMux(),
 		httpClient:  &http.Client{Timeout: 20 * time.Second},
 		authLimiter: auth.NewFailureLimiter(authFailureLimit, authCooldown),
+		tokenSecret: tokenSecret,
 	}
 	s.SetService(service)
 	s.routes()
@@ -373,7 +384,9 @@ func (s *Server) authSubID(service *mount.Service, w http.ResponseWriter, r *htt
 	code := accessCodeFromRequest(r)
 	if s.validCode(service, subID, code) {
 		s.authLimiter.Clear(key)
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		sub, _ := s.subByID(service, subID)
+		token, expiresAt := s.issueAccessToken(sub)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "access_token": token, "expires_at": expiresAt})
 		return
 	}
 	if code != "" {
@@ -391,18 +404,13 @@ func (s *Server) authorize(service *mount.Service, w http.ResponseWriter, r *htt
 	if sub.AccessCodeHash == "" {
 		return true
 	}
+	if s.validAccessToken(sub, accessTokenFromRequest(r)) {
+		return true
+	}
 	key := s.authFailureKey(r, sub.ID)
 	if s.authLimiter.Blocked(key) {
 		writeJSON(w, http.StatusTooManyRequests, catvod.Result{Error: "too many failed access code attempts"})
 		return false
-	}
-	code := accessCodeFromRequest(r)
-	if s.validCode(service, sub.ID, code) {
-		s.authLimiter.Clear(key)
-		return true
-	}
-	if code != "" {
-		s.authLimiter.RecordFailure(key)
 	}
 	writeJSON(w, http.StatusUnauthorized, catvod.Result{Error: "unauthorized"})
 	return false
@@ -433,12 +441,6 @@ func (s *Server) subByID(service *mount.Service, subID string) (config.Subscript
 }
 
 func accessCodeFromRequest(r *http.Request) string {
-	if code := r.URL.Query().Get("code"); code != "" {
-		return code
-	}
-	if code := r.Header.Get("X-Access-Code"); code != "" {
-		return code
-	}
 	var body struct {
 		Code string `json:"code"`
 	}
@@ -446,6 +448,56 @@ func accessCodeFromRequest(r *http.Request) string {
 		_ = json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&body)
 	}
 	return body.Code
+}
+
+func accessTokenFromRequest(r *http.Request) string {
+	return r.Header.Get("X-Access-Token")
+}
+
+func (s *Server) issueAccessToken(sub config.Subscription) (string, int64) {
+	expiresAt := time.Now().Add(accessTokenTTL).Unix()
+	fingerprint := accessHashFingerprint(sub.AccessCodeHash)
+	payload := fmt.Sprintf("%s.%d.%s", sub.ID, expiresAt, fingerprint)
+	signature := s.signAccessTokenPayload(payload)
+	return base64.RawURLEncoding.EncodeToString([]byte(payload + "." + signature)), expiresAt
+}
+
+func (s *Server) validAccessToken(sub config.Subscription, token string) bool {
+	if token == "" {
+		return false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return false
+	}
+	parts := strings.Split(string(raw), ".")
+	if len(parts) != 4 {
+		return false
+	}
+	if parts[0] != sub.ID {
+		return false
+	}
+	expiresAt, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || time.Now().Unix() >= expiresAt {
+		return false
+	}
+	if parts[2] != accessHashFingerprint(sub.AccessCodeHash) {
+		return false
+	}
+	payload := strings.Join(parts[:3], ".")
+	want := s.signAccessTokenPayload(payload)
+	return hmac.Equal([]byte(parts[3]), []byte(want))
+}
+
+func (s *Server) signAccessTokenPayload(payload string) string {
+	mac := hmac.New(sha256.New, s.tokenSecret)
+	_, _ = mac.Write([]byte(payload))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func accessHashFingerprint(hash string) string {
+	sum := sha256.Sum256([]byte(hash))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 func writeResult(w http.ResponseWriter, result catvod.Result, err error) {

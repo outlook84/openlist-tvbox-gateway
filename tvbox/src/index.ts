@@ -15,18 +15,25 @@ let gateway = "";
 let siteBase = "";
 let storageRule = "openlist_tvbox";
 let storageScope = "openlist_tvbox";
-const sessionCodes: Record<string, StoredCode> = {};
+const sessionTokens: Record<string, StoredToken> = {};
 
 const AUTH_ID = "__openlist_auth__";
 const REFRESH_ID = "__refresh__";
 const ACCESS_CODE_KEY = "access_code";
+const ACCESS_TOKEN_KEY = "access_token";
 const DEFAULT_ICON = "/assets/icons/file.png";
 
 type RequestOptions = {
   method?: "get" | "post";
   headers?: Record<string, string>;
   data?: Json;
-  withCode?: boolean;
+  withToken?: boolean;
+};
+
+type StoredToken = {
+  gateway: string;
+  token: string;
+  expiresAt: number;
 };
 
 type StoredCode = {
@@ -47,8 +54,26 @@ function storageScopeFromGateway(value: string): string {
   return scoped ? `openlist_tvbox_${scoped}` : "openlist_tvbox";
 }
 
+function gatewayFingerprint(): string {
+  return gateway.replace(/^https?:\/\//, "").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "gateway";
+}
+
+function queryString(params: Record<string, string> = {}): string {
+  const parts: string[] = [];
+  for (const key of Object.keys(params)) {
+    const value = params[key];
+    if (value === "") continue;
+    parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+  }
+  return parts.join("&");
+}
+
+function accessTokenKey(): string {
+  return `${ACCESS_TOKEN_KEY}:${storageScope}:${gatewayFingerprint()}`;
+}
+
 function accessCodeKey(): string {
-  return `${ACCESS_CODE_KEY}:${storageScope}`;
+  return `${ACCESS_CODE_KEY}:${storageScope}:${gatewayFingerprint()}`;
 }
 
 function parseStoredCode(value: string): StoredCode | null {
@@ -67,27 +92,11 @@ function encodeStoredCode(code: string): string {
   return JSON.stringify({ gateway, code });
 }
 
-function queryString(params: Record<string, string> = {}): string {
-  const parts: string[] = [];
-  for (const key of Object.keys(params)) {
-    const value = params[key];
-    if (value === "") continue;
-    parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
-  }
-  return parts.join("&");
-}
-
 function getStoredCode(): string {
-  const key = accessCodeKey();
-  const session = sessionCodes[key];
-  if (session && session.gateway === gateway) return session.code;
   try {
     if (typeof local !== "undefined" && local && typeof local.get === "function") {
-      const stored = parseStoredCode(String(local.get(storageRule, key) || ""));
-      if (stored) {
-        sessionCodes[key] = stored;
-        return stored.code;
-      }
+      const stored = parseStoredCode(String(local.get(storageRule, accessCodeKey()) || ""));
+      return stored ? stored.code : "";
     }
   } catch {
     return "";
@@ -96,11 +105,9 @@ function getStoredCode(): string {
 }
 
 function setStoredCode(code: string): void {
-  const key = accessCodeKey();
-  sessionCodes[key] = { gateway, code };
   try {
     if (typeof local !== "undefined" && local && typeof local.set === "function") {
-      local.set(storageRule, key, encodeStoredCode(code));
+      local.set(storageRule, accessCodeKey(), encodeStoredCode(code));
     }
   } catch {
     // Storage is a convenience, not a correctness dependency.
@@ -108,15 +115,44 @@ function setStoredCode(code: string): void {
 }
 
 function clearStoredCode(): void {
-  const key = accessCodeKey();
-  delete sessionCodes[key];
   try {
     if (typeof local !== "undefined" && local && typeof local.delete === "function") {
-      local.delete(storageRule, key);
+      local.delete(storageRule, accessCodeKey());
     }
   } catch {
     // Ignore storage failures.
   }
+}
+
+function getSessionToken(): string {
+  const session = sessionTokens[accessTokenKey()];
+  if (!session || session.gateway !== gateway) return "";
+  if (session.expiresAt <= Math.floor(Date.now() / 1000)) {
+    clearSessionToken();
+    return "";
+  }
+  return session.token;
+}
+
+function setSessionToken(token: string, expiresAt: number): void {
+  sessionTokens[accessTokenKey()] = { gateway, token, expiresAt };
+}
+
+function clearSessionToken(): void {
+  delete sessionTokens[accessTokenKey()];
+}
+
+function authenticateWithCode(code: string): boolean {
+  if (!code) return false;
+  const raw = request("/api/sub/auth", {}, { method: "post", data: { code }, withToken: false });
+  const auth = parseResult(raw);
+  if (auth.ok === true && typeof auth.access_token === "string" && typeof auth.expires_at === "number") {
+    setSessionToken(auth.access_token, auth.expires_at);
+    return true;
+  }
+  clearSessionToken();
+  clearStoredCode();
+  return false;
 }
 
 function request(path: string, params: Record<string, string> = {}, options: RequestOptions = {}): string {
@@ -125,21 +161,40 @@ function request(path: string, params: Record<string, string> = {}, options: Req
   const url = `${gateway}${path}${query ? `?${query}` : ""}`;
   if (typeof req === "function") {
     const headers: Record<string, string> = { ...(options.headers || {}) };
-    if (options.withCode !== false) {
-      const code = getStoredCode();
-      if (code) headers["X-Access-Code"] = code;
+    const send = (): string => {
+      const response = req(url, {
+        method: options.method || "get",
+        timeout: 15000,
+        async: false,
+        headers,
+        data: options.data,
+        postType: "json",
+      });
+      if (typeof response === "string") return response;
+      if (!response || !response.content) throw new Error("gateway request failed");
+      return String(response.content);
+    };
+    if (options.withToken !== false) {
+      let token = getSessionToken();
+      if (!token) {
+        authenticateWithCode(getStoredCode());
+        token = getSessionToken();
+      }
+      if (token) headers["X-Access-Token"] = token;
     }
-    const response = req(url, {
-      method: options.method || "get",
-      timeout: 15000,
-      async: false,
-      headers,
-      data: options.data,
-      postType: "json",
-    });
-    if (typeof response === "string") return response;
-    if (!response || !response.content) throw new Error("gateway request failed");
-    return String(response.content);
+    const raw = send();
+    if (options.withToken !== false && isUnauthorized(raw)) {
+      clearSessionToken();
+      delete headers["X-Access-Token"];
+      if (authenticateWithCode(getStoredCode())) {
+        const token = getSessionToken();
+        if (token) {
+          headers["X-Access-Token"] = token;
+          return send();
+        }
+      }
+    }
+    return raw;
   }
   throw new Error("TVBox req helper is not available");
 }
@@ -279,11 +334,11 @@ function authCategory(tid: string): string {
   if (action === "noop") return authResult(input);
   if (action !== "submit") return authResult(input);
   if (!input) return authResult("", "请先输入访问码");
-  const raw = request("/api/sub/auth", {}, { method: "post", data: { code: input }, withCode: false });
-  if (parseResult(raw).ok === true) {
+  if (authenticateWithCode(input)) {
     setStoredCode(input);
     return authSuccessResult();
   }
+  clearSessionToken();
   clearStoredCode();
   return authResult("", "访问码错误");
 }
@@ -355,6 +410,7 @@ const spider = {
     siteBase = siteBaseFromGateway(gateway);
     storageScope = resolveStorageRuleInput(ext) || storageScopeFromGateway(gateway);
     storageRule = storageScope;
+    clearSessionToken();
   },
 
   home(_filter?: boolean) {
