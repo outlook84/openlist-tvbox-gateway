@@ -614,6 +614,10 @@ button.help-button:focus-visible {
   grid-template-columns: minmax(150px, 0.7fr) minmax(220px, 1fr) auto;
 }
 
+.secret-placeholder {
+  min-height: 38px;
+}
+
 .access-code-row > .pending-actions,
 .secret-row > .pending-actions {
   align-items: center;

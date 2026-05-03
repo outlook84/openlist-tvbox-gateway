@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, CircleHelp, Clipboard, Languages, LogOut, Plus, RotateCcw, Save, ShieldCheck, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, CircleHelp, Clipboard, Languages, LogOut, Pencil, Plus, RotateCcw, Save, ShieldCheck, Trash2 } from "lucide-react";
 import { getConfig, getMeta, getSession, login, logout, saveConfig, setupAdmin, updateAdminAccessCode, validateConfig } from "./api";
 import { APIError, type AdminConfig, type Backend, type ConfigMeta, type ErrorParams, type Mount, type SecretAction, type SessionState, type Subscription } from "./types";
 import { detectLanguage, languageNames, saveLanguage, translate, type Language, type MessageKey } from "./i18n";
@@ -378,6 +378,7 @@ function BackendEditor({ config, setConfig, t }: EditorProps) {
           {backend.auth_type === "api_key" && (
             <SecretField
               label={t("apiKey")}
+              inputName={`backend-api-key-${backend.id || index}`}
               set={Boolean(backend.api_key_set)}
               action={backend.api_key_action || "keep"}
               value={backend.api_key || ""}
@@ -389,10 +390,16 @@ function BackendEditor({ config, setConfig, t }: EditorProps) {
           {backend.auth_type === "password" && (
             <>
               <Field label={t("user")} help={t("helpBackendUser")}>
-                <input value={backend.user || ""} onChange={(event) => updateBackend(index, { user: event.target.value })} />
+                <input
+                  value={backend.user || ""}
+                  onChange={(event) => updateBackend(index, { user: event.target.value })}
+                  autoComplete="off"
+                  name={`backend-user-${backend.id || index}`}
+                />
               </Field>
               <SecretField
                 label={t("password")}
+                inputName={`backend-password-${backend.id || index}`}
                 set={Boolean(backend.password_set)}
                 action={backend.password_action || "keep"}
                 value={backend.password || ""}
@@ -638,10 +645,18 @@ function SubLink({ sub, baseURL, t, compact = false }: { sub: Subscription; base
 }
 
 function SecretHashField({ sub, onChange, t }: { sub: Subscription; onChange: (patch: Partial<Subscription>) => void; t: T }) {
+  const [editing, setEditing] = useState(false);
   const action = sub.access_code_hash_action || "keep";
   const saved = Boolean(sub.access_code_hash_set);
   const set = action === "clear" ? false : saved;
-  const canReset = Boolean(sub.access_code) || (action !== "keep" && saved);
+  const normalAction = saved ? "keep" : "clear";
+  const canReset = editing || Boolean(sub.access_code) || action !== normalAction;
+  const resetAction = saved ? "keep" : "clear";
+
+  function resetDraft() {
+    onChange({ access_code_hash_action: resetAction, access_code: "" });
+    setEditing(false);
+  }
 
   return (
     <div className="access-code-row">
@@ -652,18 +667,27 @@ function SecretHashField({ sub, onChange, t }: { sub: Subscription; onChange: (p
         </span>
         <span className="muted">{set ? t("set") : t("notSet")}</span>
       </div>
-      <input
-        type="password"
-        inputMode="numeric"
-        value={sub.access_code || ""}
-        onChange={(event) => onChange({ access_code: event.target.value, access_code_hash_action: "replace" })}
-        placeholder={t("newSubscriptionAccessCode")}
-      />
+      {editing ? (
+        <input
+          type="password"
+          inputMode="numeric"
+          autoComplete="new-password"
+          name={`subscription-access-code-${sub.id || "new"}`}
+          value={sub.access_code || ""}
+          onChange={(event) => onChange({ access_code: event.target.value, access_code_hash_action: "replace" })}
+          placeholder={t("newSubscriptionAccessCode")}
+          autoFocus
+        />
+      ) : (
+        <div className="secret-placeholder" aria-hidden="true" />
+      )}
       <SecretPendingActions
         action={action}
+        editing={editing}
         canReset={canReset}
         canDelete={saved}
-        onKeep={() => onChange({ access_code_hash_action: "keep", access_code: "" })}
+        onEdit={() => setEditing(true)}
+        onKeep={resetDraft}
         onClear={() => onChange({ access_code_hash_action: "clear", access_code: "" })}
         t={t}
       />
@@ -673,6 +697,7 @@ function SecretHashField({ sub, onChange, t }: { sub: Subscription; onChange: (p
 
 function SecretField({
   label,
+  inputName,
   set,
   action,
   value,
@@ -681,6 +706,7 @@ function SecretField({
   t,
 }: {
   label: string;
+  inputName: string;
   set: boolean;
   action: SecretAction;
   value: string;
@@ -688,19 +714,47 @@ function SecretField({
   onValue: (value: string) => void;
   t: T;
 }) {
+  const [editing, setEditing] = useState(false);
+  const normalAction = set ? "keep" : "clear";
+  const canReset = editing || Boolean(value) || action !== normalAction;
+
+  function resetDraft() {
+    onAction(normalAction);
+    setEditing(false);
+  }
+
+  function clearSecret() {
+    onAction("clear");
+    setEditing(false);
+  }
+
   return (
     <div className="secret-row">
       <div>
         <span className="label">{label}</span>
         <span className="muted">{action === "clear" ? t("notSet") : set ? t("set") : t("notSet")}</span>
       </div>
-      <input type="password" value={value} onChange={(event) => onValue(event.target.value)} placeholder={t("newSecret")} />
+      {editing ? (
+        <input
+          type="password"
+          value={value}
+          onChange={(event) => onValue(event.target.value)}
+          placeholder={t("newSecret")}
+          autoComplete="new-password"
+          name={inputName}
+          autoFocus
+        />
+      ) : (
+        <div className="secret-placeholder" aria-hidden="true" />
+      )}
       <SecretPendingActions
         action={action}
-        canReset={Boolean(value) || (action !== "keep" && set)}
+        editing={editing}
+        canReset={canReset}
         canDelete={set}
-        onKeep={() => onAction("keep")}
-        onClear={() => onAction("clear")}
+        onEdit={() => setEditing(true)}
+        onKeep={resetDraft}
+        onClear={clearSecret}
         t={t}
       />
     </div>
@@ -709,24 +763,34 @@ function SecretField({
 
 function SecretPendingActions({
   action,
+  editing = true,
   canReset,
   canDelete,
+  onEdit,
   onKeep,
   onClear,
   t,
 }: {
   action: SecretAction;
+  editing?: boolean;
   canReset: boolean;
   canDelete: boolean;
+  onEdit?: () => void;
   onKeep: () => void;
   onClear: () => void;
   t: T;
 }) {
   return (
     <div className="pending-actions">
-      <button type="button" className="icon" aria-label={t("resetDraft")} title={t("resetDraft")} disabled={!canReset} onClick={onKeep}>
-        <RotateCcw size={16} />
-      </button>
+      {editing ? (
+        <button type="button" className="icon" aria-label={t("resetDraft")} title={t("resetDraft")} disabled={!canReset} onClick={onKeep}>
+          <RotateCcw size={16} />
+        </button>
+      ) : (
+        <button type="button" className="icon" aria-label={t("edit")} title={t("edit")} onClick={onEdit}>
+          <Pencil size={16} />
+        </button>
+      )}
       <button type="button" className={action === "clear" && canDelete ? "icon danger active" : "icon danger"} aria-label={t("clear")} title={t("clear")} disabled={!canDelete} onClick={onClear}>
         <Trash2 size={16} />
       </button>
