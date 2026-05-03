@@ -30,6 +30,9 @@ var spiderJS []byte
 //go:embed assets/icons/folder.png
 var folderIcon []byte
 
+//go:embed assets/icons/logo.svg
+var logoIcon []byte
+
 //go:embed assets/icons/video.png
 var videoIcon []byte
 
@@ -191,9 +194,13 @@ func (s *Server) spider(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) icon(w http.ResponseWriter, r *http.Request) {
 	var data []byte
+	contentType := "image/png"
 	switch r.URL.Path {
 	case "/assets/icons/folder.png":
 		data = folderIcon
+	case "/assets/icons/logo.svg":
+		data = logoIcon
+		contentType = "image/svg+xml; charset=utf-8"
 	case "/assets/icons/video.png":
 		data = videoIcon
 	case "/assets/icons/audio.png":
@@ -208,7 +215,7 @@ func (s *Server) icon(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	w.Header().Set("Content-Length", fmt.Sprint(len(data)))
 	w.WriteHeader(http.StatusOK)

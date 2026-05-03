@@ -191,6 +191,17 @@ p {
   line-height: 1.2;
 }
 
+.brand-title {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+.brand-title svg {
+  color: var(--color-primary);
+  flex: 0 0 auto;
+}
+
 .topbar p,
 .muted {
   color: var(--color-text-muted);

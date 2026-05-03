@@ -112,14 +112,18 @@ func TestUnscopedTVBoxAPIDoesNotFallbackToFirstSub(t *testing.T) {
 
 func TestIconRouteServesOnlyBuiltInIcons(t *testing.T) {
 	handler := NewServer(mount.NewService(testGatewayConfig(t), fakeOpenListClient{}, nil), nil)
-	for _, path := range []string{"/assets/icons/folder.png", "/assets/icons/video.png", "/assets/icons/audio.png", "/assets/icons/file.png", "/assets/icons/playlist.png", "/assets/icons/refresh.png"} {
+	for _, path := range []string{"/assets/icons/folder.png", "/assets/icons/logo.svg", "/assets/icons/video.png", "/assets/icons/audio.png", "/assets/icons/file.png", "/assets/icons/playlist.png", "/assets/icons/refresh.png"} {
 		req := httptest.NewRequest(http.MethodGet, "http://gateway.example.com"+path, nil)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s status = %d", path, rec.Code)
 		}
-		if rec.Header().Get("Content-Type") != "image/png" {
+		wantContentType := "image/png"
+		if path == "/assets/icons/logo.svg" {
+			wantContentType = "image/svg+xml; charset=utf-8"
+		}
+		if rec.Header().Get("Content-Type") != wantContentType {
 			t.Fatalf("%s content-type = %q", path, rec.Header().Get("Content-Type"))
 		}
 		if rec.Body.Len() == 0 {

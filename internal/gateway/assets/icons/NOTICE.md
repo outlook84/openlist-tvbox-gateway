@@ -1,6 +1,6 @@
 # Icon Notice
 
-The PNG icons in this directory are generated from Lucide icons.
+The icons in this directory are generated from Lucide icons.
 
 - Source package: `lucide-static`
 - Source project: https://lucide.dev
@@ -10,6 +10,7 @@ The PNG icons in this directory are generated from Lucide icons.
 Generated mappings:
 
 - `folder.png` from `folder.svg`
+- `logo.svg` from `tv-minimal-play.svg`
 - `video.png` from `file-video.svg`
 - `audio.png` from `file-audio.svg`
 - `file.png` from `file.svg`

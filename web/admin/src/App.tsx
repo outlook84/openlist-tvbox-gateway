@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, CircleHelp, Clipboard, Languages, LogOut, Pencil, Plus, RotateCcw, Save, ShieldCheck, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, CircleHelp, Clipboard, Languages, LogOut, Pencil, Plus, RotateCcw, Save, ShieldCheck, Trash2, TvMinimalPlay } from "lucide-react";
 import { getConfig, getMeta, getSession, login, logout, saveConfig, setupAdmin, updateAdminAccessCode, validateConfig } from "./api";
 import { APIError, type AdminConfig, type Backend, type ConfigMeta, type ErrorParams, type Mount, type SecretAction, type SessionState, type Subscription } from "./types";
 import { detectLanguage, languageNames, saveLanguage, translate, type Language, type MessageKey } from "./i18n";
@@ -91,7 +91,8 @@ export function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
+        <div className="brand-title">
+          <TvMinimalPlay size={30} />
           <h1>{t("adminDashboard")}</h1>
         </div>
         <div className="actions">
@@ -279,7 +280,7 @@ function AuthPanel({
       <form className="auth-panel" onSubmit={submit}>
         <div className="auth-title">
           <div className="auth-heading">
-            <ShieldCheck size={32} />
+            <TvMinimalPlay size={32} />
             <h1>{setupRequired ? t("createAdminAccess") : t("adminLogin")}</h1>
           </div>
           <LanguageSelect language={language} onChange={onLanguageChange} t={t} />
