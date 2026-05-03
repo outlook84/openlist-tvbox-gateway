@@ -334,7 +334,8 @@ button.menu-item.active {
 
 .panel-head,
 .item-head,
-.mount-head {
+.mount-head,
+.mount-item-head {
   align-items: center;
   display: flex;
   justify-content: space-between;

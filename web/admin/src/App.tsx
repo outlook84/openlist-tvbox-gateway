@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, CircleHelp, Languages, LogOut, Plus, RotateCcw, Save, ShieldCheck, Trash2 } from "lucide-react";
 import { getConfig, getMeta, getSession, login, logout, saveConfig, setupAdmin, updateAdminAccessCode, validateConfig } from "./api";
 import { APIError, type AdminConfig, type Backend, type ConfigMeta, type ErrorParams, type Mount, type SecretAction, type SessionState, type Subscription } from "./types";
@@ -321,7 +321,8 @@ function AuthPanel({
 }
 
 function BackendEditor({ config, setConfig, t }: EditorProps) {
-  const [newBackendIDs, setNewBackendIDs] = useState<Set<string>>(() => new Set());
+  const backendRows = useStableRowKeys("backend-row", config.backends.length);
+  const [newBackendRows, setNewBackendRows] = useState<Set<string>>(() => new Set());
 
   function updateBackend(index: number, patch: Partial<Backend>) {
     setConfig((current) => ({
@@ -332,7 +333,8 @@ function BackendEditor({ config, setConfig, t }: EditorProps) {
 
   function addBackend() {
     const id = uniqueID("backend", config.backends.map((item) => item.id));
-    setNewBackendIDs((current) => new Set(current).add(id));
+    const rowKey = backendRows.add();
+    setNewBackendRows((current) => new Set(current).add(rowKey));
     setConfig((current) => ({
       ...current,
       backends: [...current.backends, { id, server: "https://openlist.example.com", auth_type: "anonymous", version: "v3" }],
@@ -340,6 +342,13 @@ function BackendEditor({ config, setConfig, t }: EditorProps) {
   }
 
   function removeBackend(index: number) {
+    const rowKey = backendRows.keys[index];
+    backendRows.remove(index);
+    setNewBackendRows((current) => {
+      const next = new Set(current);
+      next.delete(rowKey);
+      return next;
+    });
     setConfig((current) => ({ ...current, backends: current.backends.filter((_, i) => i !== index) }));
   }
 
@@ -347,7 +356,7 @@ function BackendEditor({ config, setConfig, t }: EditorProps) {
     <section className="panel">
       <PanelHeader onAdd={addBackend} t={t} />
       {config.backends.map((backend, index) => (
-        <CollapsibleItem title={backend.id || t("backend")} onRemove={() => removeBackend(index)} defaultOpen={newBackendIDs.has(backend.id)} t={t} key={`${backend.id}-${index}`}>
+        <CollapsibleItem title={backend.id || t("backend")} onRemove={() => removeBackend(index)} defaultOpen={newBackendRows.has(backendRows.keys[index])} t={t} key={backendRows.keys[index]}>
           <div className="form-grid">
             <Field label={t("id")} help={t("helpBackendID")}>
               <input value={backend.id} onChange={(event) => updateBackend(index, { id: event.target.value })} />
@@ -401,7 +410,24 @@ function BackendEditor({ config, setConfig, t }: EditorProps) {
 
 function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
   const backendIDs = useMemo(() => config.backends.map((backend) => backend.id).filter(Boolean), [config.backends]);
-  const [newSubIDs, setNewSubIDs] = useState<Set<string>>(() => new Set());
+  const subRows = useStableRowKeys("sub-row", config.subs.length);
+  const mountRows = useRef<Record<string, string[]>>({});
+  const nextMountRowID = useRef(1);
+  const [newSubRows, setNewSubRows] = useState<Set<string>>(() => new Set());
+  const [newMountRows, setNewMountRows] = useState<Set<string>>(() => new Set());
+
+  function getMountRows(subRowKey: string, length: number) {
+    const keys = mountRows.current[subRowKey] || [];
+    while (keys.length < length) {
+      keys.push(`mount-row-${nextMountRowID.current}`);
+      nextMountRowID.current += 1;
+    }
+    if (keys.length > length) {
+      keys.length = length;
+    }
+    mountRows.current[subRowKey] = keys;
+    return keys;
+  }
 
   function updateSub(index: number, patch: Partial<Subscription>) {
     setConfig((current) => ({
@@ -412,17 +438,32 @@ function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
 
   function addSub() {
     const id = uniqueID("sub", config.subs.map((item) => item.id));
-    setNewSubIDs((current) => new Set(current).add(id));
+    const rowKey = subRows.add();
+    setNewSubRows((current) => new Set(current).add(rowKey));
     setConfig((current) => ({ ...current, subs: [...current.subs, { id, path: `/sub/${id}`, access_code_hash_action: "clear", mounts: [] }] }));
   }
 
   function removeSub(index: number) {
+    const rowKey = subRows.keys[index];
+    subRows.remove(index);
+    delete mountRows.current[rowKey];
+    setNewSubRows((current) => {
+      const next = new Set(current);
+      next.delete(rowKey);
+      return next;
+    });
     setConfig((current) => ({ ...current, subs: current.subs.filter((_, i) => i !== index) }));
   }
 
   function addMount(subIndex: number) {
     const sub = config.subs[subIndex];
     const id = uniqueID("mount", sub.mounts.map((item) => item.id));
+    const subRowKey = subRows.keys[subIndex];
+    const mountRowKeys = getMountRows(subRowKey, sub.mounts.length);
+    const mountRowKey = `mount-row-${nextMountRowID.current}`;
+    nextMountRowID.current += 1;
+    mountRowKeys.push(mountRowKey);
+    setNewMountRows((current) => new Set(current).add(mountRowKey));
     updateSub(subIndex, {
       mounts: [...sub.mounts, { id, name: id, backend: backendIDs[0] || "", path: "/", search: true, refresh: false, hidden: false }],
     });
@@ -437,6 +478,15 @@ function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
 
   function removeMount(subIndex: number, mountIndex: number) {
     const sub = config.subs[subIndex];
+    const subRowKey = subRows.keys[subIndex];
+    const mountRowKeys = getMountRows(subRowKey, sub.mounts.length);
+    const mountRowKey = mountRowKeys[mountIndex];
+    mountRowKeys.splice(mountIndex, 1);
+    setNewMountRows((current) => {
+      const next = new Set(current);
+      next.delete(mountRowKey);
+      return next;
+    });
     updateSub(subIndex, { mounts: sub.mounts.filter((_, i) => i !== mountIndex) });
   }
 
@@ -444,7 +494,7 @@ function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
     <section className="panel">
       <PanelHeader onAdd={addSub} t={t} />
       {config.subs.map((sub, subIndex) => (
-        <CollapsibleItem title={sub.id || t("subscription")} onRemove={() => removeSub(subIndex)} defaultOpen={newSubIDs.has(sub.id)} t={t} key={`${sub.id}-${subIndex}`}>
+        <CollapsibleItem title={sub.id || t("subscription")} onRemove={() => removeSub(subIndex)} defaultOpen={newSubRows.has(subRows.keys[subIndex])} t={t} key={subRows.keys[subIndex]}>
           <SubLink sub={sub} baseURL={config.public_base_url || ""} t={t} />
           <div className="form-grid">
             <Field label={t("id")} help={t("helpSubscriptionID")}>
@@ -467,42 +517,80 @@ function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
               <Plus size={16} /> {t("mount")}
             </button>
           </div>
-          {sub.mounts.map((mount, mountIndex) => (
-            <div className="mount" key={`${mount.id}-${mountIndex}`}>
-              <div className="form-grid">
-                <Field label={t("id")} help={t("helpMountID")}>
-                  <input value={mount.id} onChange={(event) => updateMount(subIndex, mountIndex, { id: event.target.value })} />
-                </Field>
-                <Field label={t("name")} help={t("helpMountName")}>
-                  <input value={mount.name || ""} onChange={(event) => updateMount(subIndex, mountIndex, { name: event.target.value })} />
-                </Field>
-                <Field label={t("backend")} help={t("helpMountBackend")}>
-                  <select value={mount.backend} onChange={(event) => updateMount(subIndex, mountIndex, { backend: event.target.value })}>
-                    <option value="">{t("selectBackend")}</option>
-                    {backendIDs.map((id) => (
-                      <option key={id} value={id}>
-                        {id}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label={t("path")} help={t("helpMountPath")}>
-                  <input value={mount.path} onChange={(event) => updateMount(subIndex, mountIndex, { path: event.target.value })} />
-                </Field>
-              </div>
-              <div className="toggles">
-                <label><input type="checkbox" checked={mount.search !== false} onChange={(event) => updateMount(subIndex, mountIndex, { search: event.target.checked })} /> <span>{t("search")}</span><HelpTip text={t("helpMountSearch")} /></label>
-                <label><input type="checkbox" checked={Boolean(mount.refresh)} onChange={(event) => updateMount(subIndex, mountIndex, { refresh: event.target.checked })} /> <span>{t("refresh")}</span><HelpTip text={t("helpMountRefresh")} /></label>
-                <label><input type="checkbox" checked={Boolean(mount.hidden)} onChange={(event) => updateMount(subIndex, mountIndex, { hidden: event.target.checked })} /> <span>{t("hidden")}</span><HelpTip text={t("helpMountHidden")} /></label>
-                <button type="button" className="icon danger" aria-label={t("removeMount")} title={t("removeMount")} onClick={() => removeMount(subIndex, mountIndex)}>
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            </div>
-          ))}
+          {sub.mounts.map((mount, mountIndex) => {
+            const mountRowKeys = getMountRows(subRows.keys[subIndex], sub.mounts.length);
+            const mountRowKey = mountRowKeys[mountIndex];
+            return (
+              <CollapsibleMount
+                title={mount.name || mount.id || t("mount")}
+                onRemove={() => removeMount(subIndex, mountIndex)}
+                defaultOpen={newMountRows.has(mountRowKey)}
+                t={t}
+                key={mountRowKey}
+              >
+                <div className="form-grid">
+                  <Field label={t("id")} help={t("helpMountID")}>
+                    <input value={mount.id} onChange={(event) => updateMount(subIndex, mountIndex, { id: event.target.value })} />
+                  </Field>
+                  <Field label={t("name")} help={t("helpMountName")}>
+                    <input value={mount.name || ""} onChange={(event) => updateMount(subIndex, mountIndex, { name: event.target.value })} />
+                  </Field>
+                  <Field label={t("backend")} help={t("helpMountBackend")}>
+                    <select value={mount.backend} onChange={(event) => updateMount(subIndex, mountIndex, { backend: event.target.value })}>
+                      <option value="">{t("selectBackend")}</option>
+                      {backendIDs.map((id) => (
+                        <option key={id} value={id}>
+                          {id}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label={t("path")} help={t("helpMountPath")}>
+                    <input value={mount.path} onChange={(event) => updateMount(subIndex, mountIndex, { path: event.target.value })} />
+                  </Field>
+                </div>
+                <div className="toggles">
+                  <label><input type="checkbox" checked={mount.search !== false} onChange={(event) => updateMount(subIndex, mountIndex, { search: event.target.checked })} /> <span>{t("search")}</span><HelpTip text={t("helpMountSearch")} /></label>
+                  <label><input type="checkbox" checked={Boolean(mount.refresh)} onChange={(event) => updateMount(subIndex, mountIndex, { refresh: event.target.checked })} /> <span>{t("refresh")}</span><HelpTip text={t("helpMountRefresh")} /></label>
+                  <label><input type="checkbox" checked={Boolean(mount.hidden)} onChange={(event) => updateMount(subIndex, mountIndex, { hidden: event.target.checked })} /> <span>{t("hidden")}</span><HelpTip text={t("helpMountHidden")} /></label>
+                </div>
+              </CollapsibleMount>
+            );
+          })}
         </CollapsibleItem>
       ))}
     </section>
+  );
+}
+
+function CollapsibleMount({
+  title,
+  onRemove,
+  defaultOpen = false,
+  t,
+  children,
+}: {
+  title: string;
+  onRemove: () => void;
+  defaultOpen?: boolean;
+  t: T;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <article className="mount">
+      <div className="mount-item-head">
+        <button type="button" className="collapse-toggle" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+          {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          <span>{title}</span>
+        </button>
+        <button type="button" className="icon danger" aria-label={t("removeMount")} title={t("removeMount")} onClick={onRemove}>
+          <Trash2 size={16} />
+        </button>
+      </div>
+      {open && children}
+    </article>
   );
 }
 
@@ -786,6 +874,32 @@ function normalizeBackend(backend: Backend): Backend {
     next.password_action = next.password_action || "keep";
   }
   return next;
+}
+
+function useStableRowKeys(prefix: string, length: number) {
+  const keys = useRef<string[]>([]);
+  const nextID = useRef(1);
+
+  while (keys.current.length < length) {
+    keys.current.push(`${prefix}-${nextID.current}`);
+    nextID.current += 1;
+  }
+  if (keys.current.length > length) {
+    keys.current.length = length;
+  }
+
+  function add() {
+    const key = `${prefix}-${nextID.current}`;
+    nextID.current += 1;
+    keys.current.push(key);
+    return key;
+  }
+
+  function remove(index: number) {
+    keys.current.splice(index, 1);
+  }
+
+  return { keys: keys.current, add, remove };
 }
 
 function uniqueID(prefix: string, existing: string[]) {
