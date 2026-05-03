@@ -689,6 +689,17 @@ function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
                     <input value={mount.path} onChange={(event) => updateMount(subIndex, mountIndex, { path: event.target.value })} autoComplete="off" name={`mount-path-${sub.id || subIndex}-${mount.id || mountIndex}`} />
                   </Field>
                 </div>
+                <Field label={t("playHeaders")} help={t("helpPlayHeaders")}>
+                  <textarea
+                    className="json-editor"
+                    value={formatPlayHeaders(mount.play_headers)}
+                    onChange={(event) => updateMount(subIndex, mountIndex, { play_headers: parsePlayHeadersDraft(event.target.value) })}
+                    autoComplete="off"
+                    spellCheck={false}
+                    name={`mount-play-headers-${sub.id || subIndex}-${mount.id || mountIndex}`}
+                    placeholder={'{\n  "User-Agent": "Mozilla/5.0"\n}'}
+                  />
+                </Field>
                 <div className="toggles">
                   <label><input type="checkbox" checked={mount.search !== false} onChange={(event) => updateMount(subIndex, mountIndex, { search: event.target.checked })} /> <span>{t("search")}</span><HelpTip text={t("helpMountSearch")} /></label>
                   <label><input type="checkbox" checked={Boolean(mount.refresh)} onChange={(event) => updateMount(subIndex, mountIndex, { refresh: event.target.checked })} /> <span>{t("refresh")}</span><HelpTip text={t("helpMountRefresh")} /></label>
@@ -1133,6 +1144,30 @@ function uniqueID(prefix: string, existing: string[]) {
     id = `${prefix}${index}`;
   }
   return id;
+}
+
+function formatPlayHeaders(headers: Mount["play_headers"]): string {
+  if (!headers || Object.keys(headers).length === 0) return "";
+  if (Object.keys(headers).length === 1 && Object.prototype.hasOwnProperty.call(headers, "")) return headers[""] || "";
+  return JSON.stringify(headers, null, 2);
+}
+
+function parsePlayHeadersDraft(value: string): Mount["play_headers"] {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { "": value };
+    }
+    const headers: Record<string, string> = {};
+    for (const [key, headerValue] of Object.entries(parsed)) {
+      headers[key] = typeof headerValue === "string" ? headerValue : String(headerValue);
+    }
+    return headers;
+  } catch {
+    return { "": value };
+  }
 }
 
 function localizeError(err: unknown, t: T, context: "request" | "config" = "request"): string {

@@ -45,7 +45,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -86,7 +87,8 @@ button.primary:hover {
 
 button:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+textarea:focus-visible {
   border-color: var(--color-primary);
   box-shadow: var(--shadow-focus);
   outline: 0;
@@ -134,7 +136,8 @@ button.full {
 }
 
 input,
-select {
+select,
+textarea {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 6px;
@@ -145,6 +148,17 @@ select {
     border-color 0.15s ease,
     box-shadow 0.15s ease;
   width: 100%;
+}
+
+textarea {
+  line-height: 1.45;
+  padding: 9px 10px;
+  resize: vertical;
+}
+
+.json-editor {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  min-height: 94px;
 }
 
 h1,
