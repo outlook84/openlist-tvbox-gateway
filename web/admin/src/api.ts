@@ -36,10 +36,10 @@ export function logout() {
   return request<{ ok: boolean }>("/admin/logout", { method: "POST" });
 }
 
-export function updateAdminAccessCode(newAccessCode: string) {
+export function updateAdminAccessCode(currentAccessCode: string, newAccessCode: string) {
   return request<{ ok: boolean }>("/admin/access-code", {
     method: "POST",
-    body: JSON.stringify({ new_access_code: newAccessCode }),
+    body: JSON.stringify({ current_access_code: currentAccessCode, new_access_code: newAccessCode }),
   });
 }
 

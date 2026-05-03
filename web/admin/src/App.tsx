@@ -135,6 +135,7 @@ export function App() {
 
 function OverviewPanel({ config, setConfig, t }: EditorProps) {
   const tvbox = config.tvbox || {};
+  const [currentAdminCode, setCurrentAdminCode] = useState("");
   const [newAdminCode, setNewAdminCode] = useState("");
   const [confirmAdminCode, setConfirmAdminCode] = useState("");
   const [adminCodeMessage, setAdminCodeMessage] = useState("");
@@ -148,7 +149,8 @@ function OverviewPanel({ config, setConfig, t }: EditorProps) {
       return;
     }
     try {
-      await updateAdminAccessCode(newAdminCode);
+      await updateAdminAccessCode(currentAdminCode, newAdminCode);
+      setCurrentAdminCode("");
       setNewAdminCode("");
       setConfirmAdminCode("");
       setAdminCodeMessage(t("adminAccessCodeSaved"));
@@ -216,6 +218,9 @@ function OverviewPanel({ config, setConfig, t }: EditorProps) {
       <section className="settings-panel">
         <h2>{t("adminAccessCode")}</h2>
         <div className="form-grid">
+          <Field label={t("currentAdminAccessCode")} help={t("helpAdminAccessCode")}>
+            <input type="password" value={currentAdminCode} onChange={(event) => setCurrentAdminCode(event.target.value)} autoComplete="current-password" />
+          </Field>
           <Field label={t("newAdminAccessCode")} help={t("helpAdminAccessCode")}>
             <input type="password" value={newAdminCode} onChange={(event) => setNewAdminCode(event.target.value)} autoComplete="new-password" />
           </Field>

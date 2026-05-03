@@ -259,8 +259,14 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateAdminAccessCode(w http.ResponseWriter, r *http.Request) {
+	key := s.adminFailureKey(r)
+	if s.authLimiter.Blocked(key) {
+		writeAdminError(w, http.StatusTooManyRequests, "auth.too_many_login_attempts", "too many failed admin authentication attempts", nil)
+		return
+	}
 	var req struct {
-		NewAccessCode string `json:"new_access_code"`
+		CurrentAccessCode string `json:"current_access_code"`
+		NewAccessCode     string `json:"new_access_code"`
 	}
 	dec := json.NewDecoder(io.LimitReader(r.Body, maxConfigBodySize+1))
 	dec.DisallowUnknownFields()
@@ -270,6 +276,13 @@ func (s *Server) updateAdminAccessCode(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setupMu.Lock()
 	defer s.setupMu.Unlock()
+	if verifyAdminCode(s.hash, req.CurrentAccessCode) != nil {
+		if req.CurrentAccessCode != "" {
+			s.authLimiter.RecordFailure(key)
+		}
+		writeAdminError(w, http.StatusUnauthorized, "auth.unauthorized", "unauthorized", nil)
+		return
+	}
 	hash, err := hashAdminCode(req.NewAccessCode)
 	if err != nil {
 		writeAdminErrorFromError(w, http.StatusBadRequest, err, "admin.access_code.invalid")
@@ -280,6 +293,7 @@ func (s *Server) updateAdminAccessCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.hash = hash
+	s.authLimiter.Clear(key)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

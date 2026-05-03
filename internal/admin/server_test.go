@@ -179,7 +179,7 @@ func TestUpdateAdminAccessCodeChangesLoginSecret(t *testing.T) {
 	}
 	cookie := loginAdmin(t, server, "123456789012")
 
-	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/access-code", strings.NewReader(`{"new_access_code":"abcdefghijkl"}`))
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/access-code", strings.NewReader(`{"current_access_code":"123456789012","new_access_code":"abcdefghijkl"}`))
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
@@ -203,7 +203,28 @@ func TestUpdateAdminAccessCodeChangesLoginSecret(t *testing.T) {
 	loginAdmin(t, server, "abcdefghijkl")
 }
 
-func TestUpdateAdminAccessCodeRejectsCurrentCodeField(t *testing.T) {
+func TestUpdateAdminAccessCodeRejectsMissingCurrentCode(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/access-code", strings.NewReader(`{"new_access_code":"abcdefghijkl"}`))
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if verifyAdminCode(server.adminHash(), "123456789012") != nil {
+		t.Fatal("current admin code should still verify")
+	}
+}
+
+func TestUpdateAdminAccessCodeRejectsWrongCurrentCode(t *testing.T) {
 	path := writeAdminConfig(t, testJSONConfig("old-secret"))
 	t.Setenv(envAdminCode, "123456789012")
 	server, err := NewServer(Options{ConfigPath: path})
@@ -216,11 +237,39 @@ func TestUpdateAdminAccessCodeRejectsCurrentCodeField(t *testing.T) {
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
+	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
 	if verifyAdminCode(server.adminHash(), "123456789012") != nil {
 		t.Fatal("current admin code should still verify")
+	}
+}
+
+func TestUpdateAdminAccessCodeRateLimitsWrongCurrentCode(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	for i := 0; i < auth.DefaultFailureLimit; i++ {
+		req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/access-code", strings.NewReader(`{"current_access_code":"wrong-code","new_access_code":"abcdefghijkl"}`))
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		server.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d body = %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/access-code", strings.NewReader(`{"current_access_code":"wrong-code","new_access_code":"abcdefghijkl"}`))
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
 }
 
