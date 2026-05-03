@@ -3,12 +3,21 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"openlist-tvbox/internal/admin"
+	"openlist-tvbox/internal/auth"
 	"openlist-tvbox/internal/config"
+	"openlist-tvbox/internal/gateway"
+	"openlist-tvbox/internal/mount"
+	"openlist-tvbox/internal/openlist"
 )
 
 func TestWatchConfigReloadsChangedFile(t *testing.T) {
@@ -54,10 +63,71 @@ func TestWatchConfigKeepsCurrentConfigWhenReloadFails(t *testing.T) {
 	}
 }
 
+func TestApplyConfigReloadsGatewayAndAdminTrustXForwardedFor(t *testing.T) {
+	path := writeTestJSONConfig(t, "Movies", true)
+	t.Setenv("OPENLIST_TVBOX_ADMIN_ACCESS_CODE", "123456789012")
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gatewayHandler := gateway.NewServer(mount.NewService(cfg, openlist.NewClient(http.DefaultClient, logger), logger), logger)
+	var adminHandler *admin.Server
+	applyConfig := func(cfg *config.Config) {
+		reloadedClient := openlist.NewClient(http.DefaultClient, logger)
+		gatewayHandler.SetService(mount.NewService(cfg, reloadedClient, logger))
+		if adminHandler != nil {
+			adminHandler.ApplyConfig(cfg)
+		}
+	}
+	adminHandler, err = admin.NewServer(admin.Options{ConfigPath: path, OnSaved: applyConfig})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded, err := config.Load(writeTestJSONConfig(t, "Shows", false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyConfig(reloaded)
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/s/default/api/tvbox/home", nil)
+	rec := httptest.NewRecorder()
+	gatewayHandler.ServeHTTP(rec, req)
+	if body := rec.Body.String(); !strings.Contains(body, "Shows") {
+		t.Fatalf("gateway did not use reloaded service: %s", body)
+	}
+	for i := 0; i < auth.DefaultFailureLimit; i++ {
+		req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
+		req.Header.Set("X-Admin-Code", "wrong-code")
+		req.Header.Set("X-Forwarded-For", "198.51.100."+strconv.Itoa(i+1))
+		rec := httptest.NewRecorder()
+		adminHandler.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d body = %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+	req = httptest.NewRequest(http.MethodGet, "http://example.com/admin/config/meta", nil)
+	req.Header.Set("X-Admin-Code", "wrong-code")
+	req.Header.Set("X-Forwarded-For", "198.51.100.250")
+	rec = httptest.NewRecorder()
+	adminHandler.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func writeTestConfig(t *testing.T, mountName string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	writeFile(t, path, testConfigYAML(mountName))
+	return path
+}
+
+func writeTestJSONConfig(t *testing.T, mountName string, trustXForwardedFor bool) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.json")
+	writeFile(t, path, testConfigJSON(mountName, trustXForwardedFor))
 	return path
 }
 
@@ -79,5 +149,33 @@ subs:
         name: ` + mountName + `
         backend: b1
         path: /Media
+`
+}
+
+func testConfigJSON(mountName string, trustXForwardedFor bool) string {
+	return `{
+  "public_base_url": "http://127.0.0.1:18989",
+  "trust_x_forwarded_for": ` + strconv.FormatBool(trustXForwardedFor) + `,
+  "backends": [
+    {
+      "id": "b1",
+      "server": "https://openlist.example.com"
+    }
+  ],
+  "subs": [
+    {
+      "id": "default",
+      "path": "/sub",
+      "mounts": [
+        {
+          "id": "media",
+          "name": "` + mountName + `",
+          "backend": "b1",
+          "path": "/Media"
+        }
+      ]
+    }
+  ]
+}
 `
 }

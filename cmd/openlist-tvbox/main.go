@@ -9,9 +9,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	"openlist-tvbox/internal/admin"
 	"openlist-tvbox/internal/auth"
 	"openlist-tvbox/internal/config"
 	"openlist-tvbox/internal/gateway"
@@ -52,7 +54,30 @@ func main() {
 
 	client := openlist.NewClient(http.DefaultClient, logger)
 	service := mount.NewService(cfg, client, logger)
-	handler := gateway.NewServer(service, logger)
+	gatewayHandler := gateway.NewServer(service, logger)
+	var adminHandler *admin.Server
+	applyConfig := func(cfg *config.Config) {
+		reloadedClient := openlist.NewClient(http.DefaultClient, logger)
+		gatewayHandler.SetService(mount.NewService(cfg, reloadedClient, logger))
+		if adminHandler != nil {
+			adminHandler.ApplyConfig(cfg)
+		}
+	}
+	var handler http.Handler = gatewayHandler
+	if config.IsJSONPath(configPath) {
+		var err error
+		adminHandler, err = admin.NewServer(admin.Options{
+			ConfigPath: configPath,
+			Listen:     listen,
+			Logger:     logger,
+			OnSaved:    applyConfig,
+		})
+		if err != nil {
+			logger.Error("admin setup failed", "error", err)
+			os.Exit(1)
+		}
+		handler = routeAdmin(adminHandler.Handler(), gatewayHandler)
+	}
 	server := &http.Server{
 		Addr:              listen,
 		Handler:           handler,
@@ -61,10 +86,7 @@ func main() {
 
 	reloadCtx, stopReload := context.WithCancel(context.Background())
 	defer stopReload()
-	go watchConfig(reloadCtx, configPath, logger, func(cfg *config.Config) {
-		reloadedClient := openlist.NewClient(http.DefaultClient, logger)
-		handler.SetService(mount.NewService(cfg, reloadedClient, logger))
-	})
+	go watchConfig(reloadCtx, configPath, logger, applyConfig)
 
 	serverErr := make(chan error, 1)
 	go func() {
@@ -105,6 +127,16 @@ func main() {
 	if err := <-serverErr; err != nil {
 		logger.Error("server stopped with error", "error", err)
 	}
+}
+
+func routeAdmin(adminHandler, gatewayHandler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/admin/") || r.URL.Path == "/admin" {
+			adminHandler.ServeHTTP(w, r)
+			return
+		}
+		gatewayHandler.ServeHTTP(w, r)
+	})
 }
 
 type configFileState struct {

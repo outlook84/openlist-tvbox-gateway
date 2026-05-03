@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"openlist-tvbox/internal/auth"
@@ -213,6 +214,40 @@ func TestValidateRejectsDuplicateSubPath(t *testing.T) {
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected duplicate sub path error")
+	}
+}
+
+func TestValidateEditableRejectsAdminSubPath(t *testing.T) {
+	for _, subPath := range []string{"/admin", "/admin/", "/admin/config"} {
+		cfg := Config{
+			Backends: []Backend{{ID: "b1", Server: "https://example.com"}},
+			Subs: []Subscription{{
+				ID:     "a",
+				Path:   subPath,
+				Mounts: []Mount{{ID: "m1", Backend: "b1", Path: "/"}},
+			}},
+		}
+		err := cfg.ValidateEditable()
+		if err == nil {
+			t.Fatalf("expected reserved admin path error for %q", subPath)
+		}
+		if !strings.Contains(err.Error(), `reserved path prefix "/admin"`) {
+			t.Fatalf("unexpected error for %q: %v", subPath, err)
+		}
+	}
+}
+
+func TestValidateEditableAllowsSubAdminPath(t *testing.T) {
+	cfg := Config{
+		Backends: []Backend{{ID: "b1", Server: "https://example.com"}},
+		Subs: []Subscription{{
+			ID:     "a",
+			Path:   "/sub/admin",
+			Mounts: []Mount{{ID: "m1", Backend: "b1", Path: "/"}},
+		}},
+	}
+	if err := cfg.ValidateEditable(); err != nil {
+		t.Fatal(err)
 	}
 }
 

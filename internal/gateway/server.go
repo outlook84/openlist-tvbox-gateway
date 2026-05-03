@@ -7,11 +7,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,33 +42,26 @@ var playlistIcon []byte
 var refreshIcon []byte
 
 type Server struct {
-	service      atomic.Pointer[mount.Service]
-	logger       *slog.Logger
-	mux          *http.ServeMux
-	httpClient   *http.Client
-	authFailures map[string]authFailure
-	authMu       sync.Mutex
-}
-
-type authFailure struct {
-	Count        int
-	LastFailedAt time.Time
-	BlockedAt    time.Time
+	service     atomic.Pointer[mount.Service]
+	logger      *slog.Logger
+	mux         *http.ServeMux
+	httpClient  *http.Client
+	authLimiter *auth.FailureLimiter
 }
 
 const (
-	authFailureLimit        = 5
-	authCooldown            = 30 * time.Second
+	authFailureLimit        = auth.DefaultFailureLimit
+	authCooldown            = auth.DefaultFailureCooldown
 	liveProxyTimeout        = 20 * time.Second
 	maxLivePlaylistBodySize = 32 << 20
 )
 
 func NewServer(service *mount.Service, logger *slog.Logger) *Server {
 	s := &Server{
-		logger:       logger,
-		mux:          http.NewServeMux(),
-		httpClient:   &http.Client{Timeout: 20 * time.Second},
-		authFailures: map[string]authFailure{},
+		logger:      logger,
+		mux:         http.NewServeMux(),
+		httpClient:  &http.Client{Timeout: 20 * time.Second},
+		authLimiter: auth.NewFailureLimiter(authFailureLimit, authCooldown),
 	}
 	s.SetService(service)
 	s.routes()
@@ -375,18 +366,18 @@ func (s *Server) authSubID(service *mount.Service, w http.ResponseWriter, r *htt
 		return
 	}
 	key := s.authFailureKey(r, subID)
-	if s.authBlocked(key) {
+	if s.authLimiter.Blocked(key) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]bool{"ok": false})
 		return
 	}
 	code := accessCodeFromRequest(r)
 	if s.validCode(service, subID, code) {
-		s.clearAuthFailure(key)
+		s.authLimiter.Clear(key)
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
 	if code != "" {
-		s.recordAuthFailure(key)
+		s.authLimiter.RecordFailure(key)
 	}
 	writeJSON(w, http.StatusUnauthorized, map[string]bool{"ok": false})
 }
@@ -401,17 +392,17 @@ func (s *Server) authorize(service *mount.Service, w http.ResponseWriter, r *htt
 		return true
 	}
 	key := s.authFailureKey(r, sub.ID)
-	if s.authBlocked(key) {
+	if s.authLimiter.Blocked(key) {
 		writeJSON(w, http.StatusTooManyRequests, catvod.Result{Error: "too many failed access code attempts"})
 		return false
 	}
 	code := accessCodeFromRequest(r)
 	if s.validCode(service, sub.ID, code) {
-		s.clearAuthFailure(key)
+		s.authLimiter.Clear(key)
 		return true
 	}
 	if code != "" {
-		s.recordAuthFailure(key)
+		s.authLimiter.RecordFailure(key)
 	}
 	writeJSON(w, http.StatusUnauthorized, catvod.Result{Error: "unauthorized"})
 	return false
@@ -429,61 +420,7 @@ func (s *Server) validCode(service *mount.Service, subID, code string) bool {
 }
 
 func (s *Server) authFailureKey(r *http.Request, subID string) string {
-	host := r.RemoteAddr
-	if serviceFromRequest(r).Config().TrustXForwardedFor {
-		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-			host = strings.TrimSpace(strings.Split(forwarded, ",")[0])
-		}
-	}
-	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
-		host = parsedHost
-	}
-	if host == "" {
-		host = r.RemoteAddr
-	}
-	return subID + "|" + host
-}
-
-func (s *Server) authBlocked(key string) bool {
-	s.authMu.Lock()
-	defer s.authMu.Unlock()
-	failure, ok := s.authFailures[key]
-	if !ok {
-		return false
-	}
-	if failure.Count < authFailureLimit {
-		if time.Since(failure.LastFailedAt) >= authCooldown {
-			delete(s.authFailures, key)
-		}
-		return false
-	}
-	if time.Since(failure.BlockedAt) >= authCooldown {
-		delete(s.authFailures, key)
-		return false
-	}
-	return true
-}
-
-func (s *Server) recordAuthFailure(key string) {
-	s.authMu.Lock()
-	defer s.authMu.Unlock()
-	failure := s.authFailures[key]
-	now := time.Now()
-	if !failure.LastFailedAt.IsZero() && now.Sub(failure.LastFailedAt) >= authCooldown {
-		failure = authFailure{}
-	}
-	failure.Count++
-	failure.LastFailedAt = now
-	if failure.Count >= authFailureLimit && failure.BlockedAt.IsZero() {
-		failure.BlockedAt = now
-	}
-	s.authFailures[key] = failure
-}
-
-func (s *Server) clearAuthFailure(key string) {
-	s.authMu.Lock()
-	defer s.authMu.Unlock()
-	delete(s.authFailures, key)
+	return subID + "|" + auth.ClientHost(r, serviceFromRequest(r).Config().TrustXForwardedFor)
 }
 
 func (s *Server) subByID(service *mount.Service, subID string) (config.Subscription, bool) {

@@ -33,15 +33,17 @@ type TVBox struct {
 }
 
 type Backend struct {
-	ID          string `json:"id" yaml:"id"`
-	Server      string `json:"server" yaml:"server"`
-	AuthType    string `json:"auth_type" yaml:"auth_type"`
-	APIKey      string `json:"api_key" yaml:"api_key"`
-	APIKeyEnv   string `json:"api_key_env" yaml:"api_key_env"`
-	User        string `json:"user" yaml:"user"`
-	Password    string `json:"password" yaml:"password"`
-	PasswordEnv string `json:"password_env" yaml:"password_env"`
-	Version     string `json:"version" yaml:"version"`
+	ID             string `json:"id" yaml:"id"`
+	Server         string `json:"server" yaml:"server"`
+	AuthType       string `json:"auth_type" yaml:"auth_type"`
+	APIKey         string `json:"api_key,omitempty" yaml:"api_key"`
+	APIKeyAction   string `json:"api_key_action,omitempty" yaml:"-"`
+	APIKeyEnv      string `json:"api_key_env,omitempty" yaml:"api_key_env"`
+	User           string `json:"user,omitempty" yaml:"user"`
+	Password       string `json:"password,omitempty" yaml:"password"`
+	PasswordAction string `json:"password_action,omitempty" yaml:"-"`
+	PasswordEnv    string `json:"password_env,omitempty" yaml:"password_env"`
+	Version        string `json:"version" yaml:"version"`
 }
 
 type Mount struct {
@@ -57,15 +59,16 @@ type Mount struct {
 }
 
 type Subscription struct {
-	ID             string  `json:"id" yaml:"id"`
-	Path           string  `json:"path" yaml:"path"`
-	AccessCodeHash string  `json:"access_code_hash" yaml:"access_code_hash"`
-	AccessCode     string  `json:"access_code" yaml:"access_code"`
-	SiteKey        string  `json:"site_key" yaml:"site_key"`
-	SiteName       string  `json:"site_name" yaml:"site_name"`
-	TVBox          TVBox   `json:"tvbox" yaml:"tvbox"`
-	Lives          []Live  `json:"lives" yaml:"lives"`
-	Mounts         []Mount `json:"mounts" yaml:"mounts"`
+	ID                   string  `json:"id" yaml:"id"`
+	Path                 string  `json:"path" yaml:"path"`
+	AccessCodeHash       string  `json:"access_code_hash,omitempty" yaml:"access_code_hash"`
+	AccessCodeHashAction string  `json:"access_code_hash_action,omitempty" yaml:"-"`
+	AccessCode           string  `json:"access_code,omitempty" yaml:"access_code"`
+	SiteKey              string  `json:"site_key" yaml:"site_key"`
+	SiteName             string  `json:"site_name" yaml:"site_name"`
+	TVBox                TVBox   `json:"tvbox" yaml:"tvbox"`
+	Lives                []Live  `json:"lives" yaml:"lives"`
+	Mounts               []Mount `json:"mounts" yaml:"mounts"`
 }
 
 type Live struct {
@@ -87,10 +90,20 @@ func Load(path string) (*Config, error) {
 	if err := unmarshalConfig(path, data, &cfg); err != nil {
 		return nil, err
 	}
-	if err := cfg.Validate(); err != nil {
-		return nil, err
+	var validateErr error
+	if IsJSONPath(path) {
+		validateErr = cfg.ValidateEditable()
+	} else {
+		validateErr = cfg.Validate()
+	}
+	if validateErr != nil {
+		return nil, validateErr
 	}
 	return &cfg, nil
+}
+
+func IsJSONPath(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".json")
 }
 
 func unmarshalConfig(path string, data []byte, cfg *Config) error {
@@ -103,6 +116,19 @@ func unmarshalConfig(path string, data []byte, cfg *Config) error {
 }
 
 func (c *Config) Validate() error {
+	return c.validate(validateOptions{})
+}
+
+func (c *Config) ValidateEditable() error {
+	return c.validate(validateOptions{AllowEmptySubs: true, ReservedHTTPPrefixes: []string{"/admin"}})
+}
+
+type validateOptions struct {
+	AllowEmptySubs       bool
+	ReservedHTTPPrefixes []string
+}
+
+func (c *Config) validate(opts validateOptions) error {
 	c.PublicBaseURL = strings.TrimRight(strings.TrimSpace(c.PublicBaseURL), "/")
 	if c.PublicBaseURL != "" {
 		u, err := url.Parse(c.PublicBaseURL)
@@ -141,7 +167,7 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
-	if len(c.Subs) == 0 {
+	if len(c.Subs) == 0 && !opts.AllowEmptySubs {
 		return errors.New("at least one sub is required")
 	}
 	subIDs := map[string]struct{}{}
@@ -171,6 +197,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("sub %q path: %w", sub.ID, err)
 		}
 		sub.Path = cleanPath
+		if reserved, ok := reservedHTTPPrefix(sub.Path, opts.ReservedHTTPPrefixes); ok {
+			return fmt.Errorf("sub %q path %q conflicts with reserved path prefix %q", sub.ID, sub.Path, reserved)
+		}
 		if _, ok := subPaths[sub.Path]; ok {
 			return fmt.Errorf("duplicate sub path %q", sub.Path)
 		}
@@ -215,6 +244,19 @@ func (c *Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func reservedHTTPPrefix(path string, prefixes []string) (string, bool) {
+	for _, prefix := range prefixes {
+		cleanPrefix, err := CleanHTTPPath(prefix)
+		if err != nil {
+			continue
+		}
+		if path == cleanPrefix || strings.HasPrefix(path, cleanPrefix+"/") {
+			return cleanPrefix, true
+		}
+	}
+	return "", false
 }
 
 func normalizeBackendAuth(b *Backend) error {

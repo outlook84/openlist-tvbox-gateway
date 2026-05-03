@@ -522,10 +522,10 @@ func TestAuthEndpointExpiredPartialFailuresDoNotTripCooldown(t *testing.T) {
 	handler := NewServer(mount.NewService(cfg, fakeOpenListClient{}, nil), nil)
 	server := handler
 	key := "shows|192.0.2.1"
-	server.authFailures[key] = authFailure{
+	server.authLimiter.Set(key, auth.Failure{
 		Count:        authFailureLimit - 1,
 		LastFailedAt: time.Now().Add(-authCooldown),
-	}
+	})
 
 	req := httptest.NewRequest(http.MethodPost, "http://gateway.example.com/api/sub/shows/auth", strings.NewReader(`{"code":"0000"}`))
 	req.RemoteAddr = "192.0.2.1:12345"
@@ -535,9 +535,7 @@ func TestAuthEndpointExpiredPartialFailuresDoNotTripCooldown(t *testing.T) {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
 
-	server.authMu.Lock()
-	failure := server.authFailures[key]
-	server.authMu.Unlock()
+	failure, _ := server.authLimiter.Get(key)
 	if failure.Count != 1 {
 		t.Fatalf("failure count = %d, want 1", failure.Count)
 	}
