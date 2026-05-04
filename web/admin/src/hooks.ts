@@ -1,27 +1,35 @@
-﻿import { useRef } from "react";
+import { useCallback, useMemo, useState } from "react";
+
+function createRowKey(prefix: string, nextID: number) {
+  return `${prefix}-${nextID}`;
+}
+
+function createRowKeys(prefix: string, startID: number, length: number) {
+  return Array.from({ length }, (_, index) => createRowKey(prefix, startID + index));
+}
 
 export function useStableRowKeys(prefix: string, length: number) {
-  const keys = useRef<string[]>([]);
-  const nextID = useRef(1);
+  const [state, setState] = useState(() => ({
+    keys: createRowKeys(prefix, 1, length),
+    nextID: length + 1,
+  }));
 
-  while (keys.current.length < length) {
-    keys.current.push(`${prefix}-${nextID.current}`);
-    nextID.current += 1;
-  }
-  if (keys.current.length > length) {
-    keys.current.length = length;
-  }
+  const keys = useMemo(() => {
+    if (state.keys.length >= length) return state.keys.slice(0, length);
+    return [...state.keys, ...createRowKeys(prefix, state.nextID, length - state.keys.length)];
+  }, [length, prefix, state.keys, state.nextID]);
 
-  function add() {
-    const key = `${prefix}-${nextID.current}`;
-    nextID.current += 1;
-    keys.current.push(key);
+  const nextID = state.nextID + Math.max(0, length - state.keys.length);
+
+  const add = useCallback(() => {
+    const key = createRowKey(prefix, nextID);
+    setState({ keys: [...keys, key], nextID: nextID + 1 });
     return key;
-  }
+  }, [keys, nextID, prefix]);
 
-  function remove(index: number) {
-    keys.current.splice(index, 1);
-  }
+  const remove = useCallback((index: number) => {
+    setState({ keys: keys.filter((_, keyIndex) => keyIndex !== index), nextID });
+  }, [keys, nextID]);
 
-  return { keys: keys.current, add, remove };
+  return { keys, add, remove };
 }

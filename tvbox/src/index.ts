@@ -417,7 +417,7 @@ const spider = {
     return homeResponse();
   },
 
-  homeContent(filter?: boolean) {
+  homeContent(_filter?: boolean) {
     return homeResponse();
   },
 
@@ -430,7 +430,7 @@ const spider = {
     return categoryResponse(tid, extend);
   },
 
-  categoryContent(tid: string, pg?: string, filter?: boolean, extend?: unknown) {
+  categoryContent(tid: string, _pg?: string, _filter?: boolean, extend?: unknown) {
     return categoryResponse(tid, extend);
   },
 
@@ -446,7 +446,7 @@ const spider = {
     return requestOrAuth("/api/tvbox/search", { key });
   },
 
-  searchContent(key: string, quick?: boolean) {
+  searchContent(key: string, _quick?: boolean) {
     return requestOrAuth("/api/tvbox/search", { key });
   },
 
@@ -454,7 +454,7 @@ const spider = {
     return requestOrAuth("/api/tvbox/play", { id });
   },
 
-  playerContent(flag: string, id: string, vipFlags?: string[]) {
+  playerContent(_flag: string, id: string, _vipFlags?: string[]) {
     return requestOrAuth("/api/tvbox/play", { id });
   },
 

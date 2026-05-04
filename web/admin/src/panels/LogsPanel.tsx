@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ListRestart, Pause, Play } from "lucide-react";
 import { getLogs } from "../api";
 import type { LogEntry } from "../types";
@@ -18,11 +18,11 @@ export function LogsPanel({ t }: { t: T }) {
 
   useEffect(() => {
     let cancelled = false;
-    setError("");
     getLogs(300, level)
       .then((result) => {
         if (!cancelled) {
           setEntries(result.logs || []);
+          setError("");
         }
       })
       .catch((err) => {
@@ -101,7 +101,7 @@ export function LogsPanel({ t }: { t: T }) {
   );
 }
 
-export function LogRow({ entry }: { entry: LogEntry }) {
+function LogRow({ entry }: { entry: LogEntry }) {
   const attrs = entry.attrs && Object.keys(entry.attrs).length > 0 ? JSON.stringify(entry.attrs) : "";
   return (
     <article className={`log-row level-${entry.level.toLowerCase()}`}>
@@ -113,7 +113,7 @@ export function LogRow({ entry }: { entry: LogEntry }) {
   );
 }
 
-export function formatLogTime(value: string) {
+function formatLogTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value;

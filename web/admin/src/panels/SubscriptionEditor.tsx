@@ -1,49 +1,47 @@
-﻿import React, { useMemo, useRef, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import type { Live, Mount, Subscription } from "../types";
-import type { EditorProps, T } from "../shared";
+import type { EditorProps } from "../shared";
 import { formatStringMap, parseOptionalInt, parseStringMapDraft, uniqueID } from "../utils";
 import { useStableRowKeys } from "../hooks";
 import { CollapsibleItem, Field, HelpTip, PanelHeader } from "../components/ui";
 import { SecretHashField } from "../components/secrets";
 import { SubLink } from "../components/subscriptionLinks";
 
+type NestedRowKeysState = {
+  keysByParent: Record<string, string[]>;
+  nextID: number;
+};
+
+function normalizeNestedRowKeys(prefix: string, state: NestedRowKeysState, parentLengths: Array<readonly [string, number]>) {
+  let nextID = state.nextID;
+  const keysByParent: Record<string, string[]> = {};
+
+  for (const [parentKey, length] of parentLengths) {
+    const keys = (state.keysByParent[parentKey] || []).slice(0, length);
+    while (keys.length < length) {
+      keys.push(`${prefix}-${nextID}`);
+      nextID += 1;
+    }
+    keysByParent[parentKey] = keys;
+  }
+
+  return { keysByParent, nextID };
+}
+
 export function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
   const backendIDs = useMemo(() => config.backends.map((backend) => backend.id).filter(Boolean), [config.backends]);
   const subRows = useStableRowKeys("sub-row", config.subs.length);
-  const mountRows = useRef<Record<string, string[]>>({});
-  const liveRows = useRef<Record<string, string[]>>({});
-  const nextMountRowID = useRef(1);
-  const nextLiveRowID = useRef(1);
+  const mountParentLengths = useMemo(() => config.subs.map((sub, index) => [subRows.keys[index], sub.mounts.length] as const), [config.subs, subRows.keys]);
+  const liveParentLengths = useMemo(() => config.subs.map((sub, index) => [subRows.keys[index], sub.lives?.length || 0] as const), [config.subs, subRows.keys]);
+  const [mountRowState, setMountRowState] = useState<NestedRowKeysState>(() => ({ keysByParent: {}, nextID: 1 }));
+  const [liveRowState, setLiveRowState] = useState<NestedRowKeysState>(() => ({ keysByParent: {}, nextID: 1 }));
+  const mountRows = useMemo(() => normalizeNestedRowKeys("mount-row", mountRowState, mountParentLengths), [mountParentLengths, mountRowState]);
+  const liveRows = useMemo(() => normalizeNestedRowKeys("live-row", liveRowState, liveParentLengths), [liveParentLengths, liveRowState]);
+
   const [newSubRows, setNewSubRows] = useState<Set<string>>(() => new Set());
   const [newMountRows, setNewMountRows] = useState<Set<string>>(() => new Set());
   const [newLiveRows, setNewLiveRows] = useState<Set<string>>(() => new Set());
-
-  function getMountRows(subRowKey: string, length: number) {
-    const keys = mountRows.current[subRowKey] || [];
-    while (keys.length < length) {
-      keys.push(`mount-row-${nextMountRowID.current}`);
-      nextMountRowID.current += 1;
-    }
-    if (keys.length > length) {
-      keys.length = length;
-    }
-    mountRows.current[subRowKey] = keys;
-    return keys;
-  }
-
-  function getLiveRows(subRowKey: string, length: number) {
-    const keys = liveRows.current[subRowKey] || [];
-    while (keys.length < length) {
-      keys.push(`live-row-${nextLiveRowID.current}`);
-      nextLiveRowID.current += 1;
-    }
-    if (keys.length > length) {
-      keys.length = length;
-    }
-    liveRows.current[subRowKey] = keys;
-    return keys;
-  }
 
   function updateSub(index: number, patch: Partial<Subscription>) {
     setConfig((current) => ({
@@ -62,8 +60,16 @@ export function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
   function removeSub(index: number) {
     const rowKey = subRows.keys[index];
     subRows.remove(index);
-    delete mountRows.current[rowKey];
-    delete liveRows.current[rowKey];
+    setMountRowState(() => {
+      const keysByParent = { ...mountRows.keysByParent };
+      delete keysByParent[rowKey];
+      return { keysByParent, nextID: mountRows.nextID };
+    });
+    setLiveRowState(() => {
+      const keysByParent = { ...liveRows.keysByParent };
+      delete keysByParent[rowKey];
+      return { keysByParent, nextID: liveRows.nextID };
+    });
     setNewSubRows((current) => {
       const next = new Set(current);
       next.delete(rowKey);
@@ -76,11 +82,13 @@ export function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
     const sub = config.subs[subIndex];
     const id = uniqueID("mount", sub.mounts.map((item) => item.id));
     const subRowKey = subRows.keys[subIndex];
-    const mountRowKeys = getMountRows(subRowKey, sub.mounts.length);
-    const mountRowKey = `mount-row-${nextMountRowID.current}`;
-    nextMountRowID.current += 1;
-    mountRowKeys.push(mountRowKey);
-    setNewMountRows((current) => new Set(current).add(mountRowKey));
+    const mountRowKeys = mountRows.keysByParent[subRowKey] || [];
+    const rowKey = `mount-row-${mountRows.nextID}`;
+    setMountRowState({
+      keysByParent: { ...mountRows.keysByParent, [subRowKey]: [...mountRowKeys, rowKey] },
+      nextID: mountRows.nextID + 1,
+    });
+    setNewMountRows((current) => new Set(current).add(rowKey));
     updateSub(subIndex, {
       mounts: [...sub.mounts, { id, name: id, backend: backendIDs[0] || "", path: "/", search: true, refresh: false, hidden: false }],
     });
@@ -89,11 +97,13 @@ export function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
   function addLive(subIndex: number) {
     const sub = config.subs[subIndex];
     const subRowKey = subRows.keys[subIndex];
-    const liveRowKeys = getLiveRows(subRowKey, sub.lives?.length || 0);
-    const liveRowKey = `live-row-${nextLiveRowID.current}`;
-    nextLiveRowID.current += 1;
-    liveRowKeys.push(liveRowKey);
-    setNewLiveRows((current) => new Set(current).add(liveRowKey));
+    const liveRowKeys = liveRows.keysByParent[subRowKey] || [];
+    const rowKey = `live-row-${liveRows.nextID}`;
+    setLiveRowState({
+      keysByParent: { ...liveRows.keysByParent, [subRowKey]: [...liveRowKeys, rowKey] },
+      nextID: liveRows.nextID + 1,
+    });
+    setNewLiveRows((current) => new Set(current).add(rowKey));
     updateSub(subIndex, {
       lives: [...(sub.lives || []), { name: "Live", type: 0, url: "" }],
     });
@@ -110,12 +120,15 @@ export function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
     const sub = config.subs[subIndex];
     const lives = sub.lives || [];
     const subRowKey = subRows.keys[subIndex];
-    const liveRowKeys = getLiveRows(subRowKey, lives.length);
-    const liveRowKey = liveRowKeys[liveIndex];
-    liveRowKeys.splice(liveIndex, 1);
+    const liveRowKeys = liveRows.keysByParent[subRowKey] || [];
+    const rowKey = liveRowKeys[liveIndex];
+    setLiveRowState({
+      keysByParent: { ...liveRows.keysByParent, [subRowKey]: liveRowKeys.filter((_, index) => index !== liveIndex) },
+      nextID: liveRows.nextID,
+    });
     setNewLiveRows((current) => {
       const next = new Set(current);
-      next.delete(liveRowKey);
+      next.delete(rowKey);
       return next;
     });
     updateSub(subIndex, { lives: lives.filter((_, i) => i !== liveIndex) });
@@ -131,12 +144,15 @@ export function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
   function removeMount(subIndex: number, mountIndex: number) {
     const sub = config.subs[subIndex];
     const subRowKey = subRows.keys[subIndex];
-    const mountRowKeys = getMountRows(subRowKey, sub.mounts.length);
-    const mountRowKey = mountRowKeys[mountIndex];
-    mountRowKeys.splice(mountIndex, 1);
+    const mountRowKeys = mountRows.keysByParent[subRowKey] || [];
+    const rowKey = mountRowKeys[mountIndex];
+    setMountRowState({
+      keysByParent: { ...mountRows.keysByParent, [subRowKey]: mountRowKeys.filter((_, index) => index !== mountIndex) },
+      nextID: mountRows.nextID,
+    });
     setNewMountRows((current) => {
       const next = new Set(current);
-      next.delete(mountRowKey);
+      next.delete(rowKey);
       return next;
     });
     updateSub(subIndex, { mounts: sub.mounts.filter((_, i) => i !== mountIndex) });
@@ -170,16 +186,15 @@ export function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
             </button>
           </div>
           {(sub.lives || []).map((live, liveIndex) => {
-            const liveRowKeys = getLiveRows(subRows.keys[subIndex], sub.lives?.length || 0);
-            const liveRowKey = liveRowKeys[liveIndex];
+            const liveRowKeys = liveRows.keysByParent[subRows.keys[subIndex]] || [];
+            const rowKey = liveRowKeys[liveIndex];
             return (
               <CollapsibleMount
                 title={live.name || t("live")}
                 onRemove={() => removeLive(subIndex, liveIndex)}
-                defaultOpen={newLiveRows.has(liveRowKey)}
+                defaultOpen={newLiveRows.has(rowKey)}
                 removeLabel={t("removeLive")}
-                t={t}
-                key={liveRowKey}
+                key={rowKey}
               >
                 <div className="form-grid">
                   <Field label={t("name")} help={t("helpLiveName")}>
@@ -211,16 +226,15 @@ export function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
             </button>
           </div>
           {sub.mounts.map((mount, mountIndex) => {
-            const mountRowKeys = getMountRows(subRows.keys[subIndex], sub.mounts.length);
-            const mountRowKey = mountRowKeys[mountIndex];
+            const mountRowKeys = mountRows.keysByParent[subRows.keys[subIndex]] || [];
+            const rowKey = mountRowKeys[mountIndex];
             return (
               <CollapsibleMount
                 title={mount.name || mount.id || t("mount")}
                 onRemove={() => removeMount(subIndex, mountIndex)}
-                defaultOpen={newMountRows.has(mountRowKey)}
+                defaultOpen={newMountRows.has(rowKey)}
                 removeLabel={t("removeMount")}
-                t={t}
-                key={mountRowKey}
+                key={rowKey}
               >
                 <div className="form-grid">
                   <Field label={t("id")} help={t("helpMountID")}>
@@ -284,14 +298,12 @@ export function CollapsibleMount({
   onRemove,
   defaultOpen = false,
   removeLabel,
-  t,
   children,
 }: {
   title: string;
   onRemove: () => void;
   defaultOpen?: boolean;
   removeLabel: string;
-  t: T;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);

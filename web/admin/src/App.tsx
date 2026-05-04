@@ -1,7 +1,7 @@
-﻿import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, LogOut, Save, TvMinimalPlay } from "lucide-react";
-import { getConfig, getMeta, getSession, logout, onAuthExpired, saveConfig, validateConfig } from "./api";
-import { APIError, type AdminConfig, type ConfigMeta, type SessionState } from "./types";
+import { getConfig, getSession, logout, onAuthExpired, saveConfig, validateConfig } from "./api";
+import { APIError, type AdminConfig, type SessionState } from "./types";
 import { detectLanguage, saveLanguage, translate, type Language } from "./i18n";
 import type { T } from "./shared";
 import { emptyConfig, normalizeConfig } from "./configState";
@@ -16,29 +16,27 @@ import { LogsPanel } from "./panels/LogsPanel";
 type AdminTab = "overview" | "backends" | "subscriptions" | "logs";
 export function App() {
   const [session, setSession] = useState<SessionState | null>(null);
-  const [meta, setMeta] = useState<ConfigMeta | null>(null);
   const [config, setConfig] = useState<AdminConfig>(emptyConfig);
   const [language, setLanguage] = useState<Language>(() => detectLanguage());
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
-  const t: T = (key) => translate(language, key);
+  const t: T = useMemo(() => (key) => translate(language, key), [language]);
 
   function changeLanguage(next: Language) {
     setLanguage(next);
     saveLanguage(next);
   }
 
-  async function load() {
+  const load = useCallback(async () => {
     setError("");
     setLoading(true);
     try {
       const nextSession = await getSession();
       setSession(nextSession);
       if (nextSession.authenticated) {
-        const [nextMeta, nextConfig] = await Promise.all([getMeta(), getConfig()]);
-        setMeta(nextMeta);
+        const nextConfig = await getConfig();
         setConfig(normalizeConfig(nextConfig));
       }
     } catch (err) {
@@ -46,17 +44,16 @@ export function App() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [t]);
 
   useEffect(() => {
-    void load();
-  }, []);
+    void Promise.resolve().then(load);
+  }, [load]);
 
   useEffect(() => {
     return onAuthExpired(() => {
       setSession({ authenticated: false, setup_required: false });
       setConfig(emptyConfig);
-      setMeta(null);
       setMessage("");
       setError("");
       setLoading(false);
