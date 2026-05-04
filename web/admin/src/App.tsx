@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, LogOut, Save, TvMinimalPlay } from "lucide-react";
 import { getConfig, getSession, logout, onAuthExpired, saveConfig, validateConfig } from "./api";
 import { APIError, type AdminConfig, type SessionState } from "./types";
@@ -23,6 +23,11 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
   const t: T = useMemo(() => (key) => translate(language, key), [language]);
+  const tRef = useRef<T>(t);
+
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
 
   function changeLanguage(next: Language) {
     setLanguage(next);
@@ -40,11 +45,11 @@ export function App() {
         setConfig(normalizeConfig(nextConfig));
       }
     } catch (err) {
-      setError(localizeError(err, t));
+      setError(localizeError(err, tRef.current));
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, []);
 
   useEffect(() => {
     void Promise.resolve().then(load);
