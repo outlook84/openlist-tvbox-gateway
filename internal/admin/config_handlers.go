@@ -144,17 +144,17 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ApplyConfig(cfg *config.Config) {
-	s.setTrustXForwardedFor(cfg.TrustXForwardedFor)
+	s.setTrustForwardedHeaders(cfg.TrustForwardedHeaders)
 	s.setPublicBaseURL(cfg.PublicBaseURL)
 }
 
-func (s *Server) setTrustXForwardedFor(trust bool) {
+func (s *Server) setTrustForwardedHeaders(trust bool) {
 	s.trustMu.Lock()
 	defer s.trustMu.Unlock()
 	s.trustXFF = trust
 }
 
-func (s *Server) trustXForwardedFor() bool {
+func (s *Server) trustForwardedHeaders() bool {
 	s.trustMu.RLock()
 	defer s.trustMu.RUnlock()
 	return s.trustXFF

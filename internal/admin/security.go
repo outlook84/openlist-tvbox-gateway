@@ -9,21 +9,22 @@ import (
 	"time"
 
 	"openlist-tvbox/internal/auth"
+	"openlist-tvbox/internal/proxyheaders"
 )
 
 func (s *Server) adminFailureKey(r *http.Request) string {
-	return "admin|" + auth.ClientHost(r, s.trustXForwardedFor())
+	return "admin|" + auth.ClientHost(r, s.trustForwardedHeaders())
 }
 
 func (s *Server) setupFailureKey(r *http.Request) string {
-	return "setup|" + auth.ClientHost(r, s.trustXForwardedFor())
+	return "setup|" + auth.ClientHost(r, s.trustForwardedHeaders())
 }
 
 func (s *Server) logAuthFailure(message string, r *http.Request, reason string) {
 	if s.logger == nil {
 		return
 	}
-	s.logger.Warn(message, "client", auth.ClientHost(r, s.trustXForwardedFor()), "reason", reason)
+	s.logger.Warn(message, "client", auth.ClientHost(r, s.trustForwardedHeaders()), "reason", reason)
 }
 func adminURL(listen string) string {
 	host := listen
@@ -126,7 +127,7 @@ func (s *Server) sessionCookieSecure(r *http.Request) bool {
 }
 
 func (s *Server) requestIsHTTPS(r *http.Request) bool {
-	return r.TLS != nil || (s.trustXForwardedFor() && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"))
+	return proxyheaders.IsHTTPS(r, s.trustForwardedHeaders())
 }
 
 func (s *Server) sameOrigin(r *http.Request) bool {
@@ -146,24 +147,41 @@ func (s *Server) originMatchesRequest(r *http.Request, raw string) bool {
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return false
 	}
-	want, err := url.Parse(s.adminBaseURL(r))
-	if err != nil || want.Scheme == "" || want.Host == "" {
-		return false
+	for _, baseURL := range s.adminOriginBaseURLs(r) {
+		want, err := url.Parse(baseURL)
+		if err != nil || want.Scheme == "" || want.Host == "" {
+			continue
+		}
+		if strings.EqualFold(u.Scheme, want.Scheme) && strings.EqualFold(u.Host, want.Host) {
+			return true
+		}
 	}
-	return strings.EqualFold(u.Scheme, want.Scheme) && strings.EqualFold(u.Host, want.Host)
+	return false
 }
 
 func (s *Server) adminBaseURL(r *http.Request) string {
-	if baseURL := s.getPublicBaseURL(); baseURL != "" {
-		return baseURL
+	baseURLs := s.adminOriginBaseURLs(r)
+	if len(baseURLs) > 0 {
+		return baseURLs[0]
 	}
-	scheme := "http"
-	if s.requestIsHTTPS(r) {
-		scheme = "https"
-	}
+	return "http://localhost"
+}
+
+func (s *Server) adminOriginBaseURLs(r *http.Request) []string {
 	host := r.Host
 	if host == "" {
 		host = "localhost"
 	}
-	return scheme + "://" + host
+	scheme := proxyheaders.Scheme(r, s.trustForwardedHeaders())
+	baseURLs := []string{scheme + "://" + host}
+	if baseURL := s.getPublicBaseURL(); baseURL != "" {
+		baseURLs = append(baseURLs, baseURL)
+	}
+	if s.trustForwardedHeaders() {
+		forwardedHost := proxyheaders.Host(r, true)
+		if forwardedHost != "" && forwardedHost != host {
+			baseURLs = append(baseURLs, proxyheaders.Scheme(r, true)+"://"+forwardedHost)
+		}
+	}
+	return baseURLs
 }

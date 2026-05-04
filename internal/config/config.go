@@ -16,11 +16,20 @@ import (
 )
 
 type Config struct {
-	PublicBaseURL      string         `json:"public_base_url" yaml:"public_base_url"`
-	TrustXForwardedFor bool           `json:"trust_x_forwarded_for" yaml:"trust_x_forwarded_for"`
-	TVBox              TVBox          `json:"tvbox" yaml:"tvbox"`
-	Backends           []Backend      `json:"backends" yaml:"backends"`
-	Subs               []Subscription `json:"subs" yaml:"subs"`
+	PublicBaseURL         string         `json:"public_base_url" yaml:"public_base_url"`
+	TrustForwardedHeaders bool           `json:"trust_forwarded_headers" yaml:"trust_forwarded_headers"`
+	TVBox                 TVBox          `json:"tvbox" yaml:"tvbox"`
+	Backends              []Backend      `json:"backends" yaml:"backends"`
+	Subs                  []Subscription `json:"subs" yaml:"subs"`
+}
+
+type configAlias Config
+
+type rawConfig struct {
+	configAlias        `yaml:",inline"`
+	TrustXForwardedFor bool `json:"trust_x_forwarded_for" yaml:"trust_x_forwarded_for"`
+	HasTrustForwarded  bool `json:"-" yaml:"-"`
+	HasLegacyForwarded bool `json:"-" yaml:"-"`
 }
 
 type TVBox struct {
@@ -156,11 +165,52 @@ func IsJSONPath(path string) bool {
 }
 
 func unmarshalConfig(path string, data []byte, cfg *Config) error {
+	var raw rawConfig
+	var err error
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".yaml", ".yml":
-		return yaml.Unmarshal(data, cfg)
+		err = yaml.Unmarshal(data, &raw)
 	default:
-		return json.Unmarshal(data, cfg)
+		err = json.Unmarshal(data, &raw)
+	}
+	if err != nil {
+		return err
+	}
+	*cfg = Config(raw.configAlias)
+	raw.HasTrustForwarded = hasTopLevelConfigKey(path, data, "trust_forwarded_headers")
+	raw.HasLegacyForwarded = hasTopLevelConfigKey(path, data, "trust_x_forwarded_for")
+	normalizeForwardedHeaderTrust(raw, cfg)
+	return nil
+}
+
+func normalizeForwardedHeaderTrust(raw rawConfig, cfg *Config) {
+	if cfg.TrustForwardedHeaders {
+		return
+	}
+	if raw.HasTrustForwarded {
+		return
+	}
+	if raw.HasLegacyForwarded && raw.TrustXForwardedFor {
+		cfg.TrustForwardedHeaders = true
+	}
+}
+
+func hasTopLevelConfigKey(path string, data []byte, key string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".yaml", ".yml":
+		var raw map[string]any
+		if err := yaml.Unmarshal(data, &raw); err != nil {
+			return false
+		}
+		_, ok := raw[key]
+		return ok
+	default:
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return false
+		}
+		_, ok := raw[key]
+		return ok
 	}
 }
 

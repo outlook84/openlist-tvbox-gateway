@@ -624,7 +624,7 @@ func TestAuthEndpointCooldownIgnoresForwardedForByDefault(t *testing.T) {
 
 func TestAuthEndpointCooldownCanTrustForwardedFor(t *testing.T) {
 	cfg := testGatewayConfig(t)
-	cfg.TrustXForwardedFor = true
+	cfg.TrustForwardedHeaders = true
 	cfg.Subs[1].AccessCodeHash = mustHash(t, "123456")
 	handler := NewServer(mount.NewService(cfg, fakeOpenListClient{}, nil), nil)
 

@@ -120,7 +120,7 @@ func TestLoadYAMLWithMultipleSubs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	data := []byte(`
 public_base_url: http://127.0.0.1:18989
-trust_x_forwarded_for: true
+trust_forwarded_headers: true
 tvbox:
   site_key: openlist_tvbox
   site_name: OpenList
@@ -159,8 +159,8 @@ subs:
 	if len(cfg.Subs) != 2 {
 		t.Fatalf("subs = %#v", cfg.Subs)
 	}
-	if !cfg.TrustXForwardedFor {
-		t.Fatal("trust_x_forwarded_for was not loaded")
+	if !cfg.TrustForwardedHeaders {
+		t.Fatal("trust_forwarded_headers was not loaded")
 	}
 	if cfg.Subs[0].Mounts[0].Path != "/Videos/Movies" {
 		t.Fatalf("mount path = %q", cfg.Subs[0].Mounts[0].Path)
@@ -173,6 +173,32 @@ subs:
 	}
 	if cfg.Subs[1].TVBox.SiteKey != "openlist_tvbox_shows" || cfg.Subs[1].TVBox.SiteName != "OpenList" {
 		t.Fatalf("sub inherited tvbox identity = %#v", cfg.Subs[1].TVBox)
+	}
+}
+
+func TestLoadYAMLSupportsLegacyTrustXForwardedFor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := []byte(`
+trust_x_forwarded_for: true
+backends:
+  - id: main
+    server: https://openlist.example.com
+subs:
+  - id: movies
+    mounts:
+      - id: hd
+        backend: main
+        path: /Videos/Movies
+`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.TrustForwardedHeaders {
+		t.Fatal("legacy trust_x_forwarded_for did not enable trust_forwarded_headers")
 	}
 }
 

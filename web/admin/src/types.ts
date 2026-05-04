@@ -61,6 +61,7 @@ export interface Subscription {
 
 export interface AdminConfig {
   public_base_url?: string;
+  trust_forwarded_headers?: boolean;
   trust_x_forwarded_for?: boolean;
   tvbox?: TVBoxSettings;
   backends: Backend[];

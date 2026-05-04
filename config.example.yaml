@@ -4,11 +4,12 @@
 # 不是 TVBox 应使用的地址时，请设置此项。
 public_base_url: http://127.0.0.1:18989
 
-# 控制访问码冷却计时所使用的客户端身份来源。
+# 控制是否信任反向代理提供的转发头。
 # 默认值：false。直接公网访问时请保持 false。
-# 仅当可信反向代理会覆盖或移除客户端传入的 X-Forwarded-For 头时才启用；
-# 否则客户端可以伪造该请求头来绕过冷却限制。
-trust_x_forwarded_for: false
+# 仅当可信反向代理会覆盖或移除客户端传入的 X-Forwarded-For、
+# X-Forwarded-Proto、X-Forwarded-Host 头时才启用；否则客户端可以伪造
+# 这些请求头来影响冷却限制、HTTPS 判断或 Admin UI 同源校验。
+trust_forwarded_headers: false
 
 # subs[].path 生成的 TVBox 订阅条目的默认值。
 # site_key 只能包含字母、数字、下划线或短横线。

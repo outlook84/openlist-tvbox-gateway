@@ -89,7 +89,7 @@ func (s *Server) validCode(service *mount.Service, subID, code string) bool {
 }
 
 func (s *Server) authFailureKey(r *http.Request, subID string) string {
-	return subID + "|" + auth.ClientHost(r, serviceFromRequest(r).Config().TrustXForwardedFor)
+	return subID + "|" + auth.ClientHost(r, serviceFromRequest(r).Config().TrustForwardedHeaders)
 }
 
 func (s *Server) subByID(service *mount.Service, subID string) (config.Subscription, bool) {

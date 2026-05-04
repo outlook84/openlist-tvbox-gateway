@@ -157,7 +157,7 @@ func (s *Server) updateAdminAccessCode(w http.ResponseWriter, r *http.Request) {
 	s.hash = hash
 	s.authLimiter.Clear(key)
 	if s.logger != nil {
-		s.logger.Info("admin access code updated", "client", auth.ClientHost(r, s.trustXForwardedFor()))
+		s.logger.Info("admin access code updated", "client", auth.ClientHost(r, s.trustForwardedHeaders()))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

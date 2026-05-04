@@ -72,7 +72,7 @@ func NewServer(opts Options) (*Server, error) {
 	trustXFF := false
 	publicBaseURL := ""
 	if cfg, err := config.Load(opts.ConfigPath); err == nil {
-		trustXFF = cfg.TrustXForwardedFor
+		trustXFF = cfg.TrustForwardedHeaders
 		publicBaseURL = cfg.PublicBaseURL
 	}
 	if opts.Logger != nil {

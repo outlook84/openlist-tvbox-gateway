@@ -86,7 +86,7 @@ func TestWatchConfigKeepsCurrentConfigWhenReloadFails(t *testing.T) {
 	}
 }
 
-func TestApplyConfigReloadsGatewayAndAdminTrustXForwardedFor(t *testing.T) {
+func TestApplyConfigReloadsGatewayAndAdminTrustForwardedHeaders(t *testing.T) {
 	path := writeTestJSONConfig(t, "Movies", true)
 	t.Setenv("OPENLIST_TVBOX_ADMIN_ACCESS_CODE", "123456789012")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -144,10 +144,10 @@ func writeTestConfig(t *testing.T, mountName string) string {
 	return path
 }
 
-func writeTestJSONConfig(t *testing.T, mountName string, trustXForwardedFor bool) string {
+func writeTestJSONConfig(t *testing.T, mountName string, trustForwardedHeaders bool) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.json")
-	writeFile(t, path, testConfigJSON(mountName, trustXForwardedFor))
+	writeFile(t, path, testConfigJSON(mountName, trustForwardedHeaders))
 	return path
 }
 
@@ -172,10 +172,10 @@ subs:
 `
 }
 
-func testConfigJSON(mountName string, trustXForwardedFor bool) string {
+func testConfigJSON(mountName string, trustForwardedHeaders bool) string {
 	return `{
   "public_base_url": "http://127.0.0.1:18989",
-  "trust_x_forwarded_for": ` + strconv.FormatBool(trustXForwardedFor) + `,
+  "trust_forwarded_headers": ` + strconv.FormatBool(trustForwardedHeaders) + `,
   "backends": [
     {
       "id": "b1",

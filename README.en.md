@@ -28,6 +28,8 @@ The following TVBox app shells have been tested:
 
 ## Deployment
 
+If the gateway is accessed through a reverse proxy, NAT, or CDN, set `public_base_url` in the config file to the external URL used by browsers and TVBox. Enable `trust_forwarded_headers` only when a trusted reverse proxy overwrites or strips client-supplied forwarded headers.
+
 ### Release Binary
 
 Download the archive for your operating system from the project releases, then extract `openlist-tvbox` or `openlist-tvbox.exe`.
@@ -60,14 +62,14 @@ Or preconfigure a bcrypt hash:
 OPENLIST_TVBOX_ADMIN_ACCESS_CODE_HASH='$2a$...' ./openlist-tvbox -config config.json -listen :18989
 ```
 
-The Admin UI writes directly to the JSON config file, so the config directory must be writable. YAML configs still work for TVBox gateway APIs, but `/admin` is not mounted for YAML. To move an existing YAML config that does not use env-backed secrets such as `api_key_env` or `password_env` to Admin UI management, export it as JSON first:
+The Admin UI writes directly to the JSON config file, so the config directory must be writable. To move an existing YAML config that does not use env-backed secrets such as `api_key_env` or `password_env` to Admin UI management, export it as JSON first:
 
 ```bash
 ./openlist-tvbox -config config.yaml -print-config-json > config.json
 ./openlist-tvbox -config config.json -listen :18989
 ```
 
-Note: editable JSON config used by Admin UI does not support env-backed secrets such as `api_key_env` or `password_env`; save secrets in the UI instead. Restrict public access to `/admin`; HTTPS behind a reverse proxy is recommended. In reverse-proxy deployments, set `public_base_url`; if you need to trust `X-Forwarded-Proto`, also set `trust_x_forwarded_for: true` or enable the matching option in the UI.
+Note: editable JSON config used by Admin UI does not support env-backed secrets such as `api_key_env` or `password_env`; save secrets in the UI instead.
 
 If you build from source, use `pnpm build:go`, or run `pnpm build` before the Go build, so the Admin UI frontend assets are written to `internal/admin/assets` and embedded into the binary.
 
@@ -139,7 +141,8 @@ Start from an example config and edit it as needed. The example configs also con
 
 Common fields:
 
-- `public_base_url`: external gateway URL visible to TVBox.
+- `public_base_url`: external gateway URL visible to TVBox and the proxied Admin UI.
+- `trust_forwarded_headers`: whether to trust `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` from a reverse proxy.
 - `backends`: real OpenList / AList backend definitions.
 - `subs`: TVBox subscription endpoints.
 - `subs[].mounts`: backend paths exposed as TVBox categories.

@@ -90,7 +90,7 @@ func (s *Server) logSubAuthFailure(message, subID string, r *http.Request, reaso
 	if s.logger == nil {
 		return
 	}
-	s.logger.Warn(message, "sub", subID, "client", auth.ClientHost(r, serviceFromRequest(r).Config().TrustXForwardedFor), "reason", reason)
+	s.logger.Warn(message, "sub", subID, "client", auth.ClientHost(r, serviceFromRequest(r).Config().TrustForwardedHeaders), "reason", reason)
 }
 
 func tvboxErrorKind(err error) string {

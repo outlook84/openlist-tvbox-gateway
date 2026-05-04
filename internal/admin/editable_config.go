@@ -238,11 +238,12 @@ func cloneStringMap(in map[string]string) map[string]string {
 }
 
 type editableConfig struct {
-	PublicBaseURL      string                 `json:"public_base_url"`
-	TrustXForwardedFor bool                   `json:"trust_x_forwarded_for"`
-	TVBox              config.TVBox           `json:"tvbox"`
-	Backends           []editableBackend      `json:"backends"`
-	Subs               []editableSubscription `json:"subs"`
+	PublicBaseURL         string                 `json:"public_base_url"`
+	TrustForwardedHeaders bool                   `json:"trust_forwarded_headers"`
+	TrustXForwardedFor    bool                   `json:"trust_x_forwarded_for,omitempty"`
+	TVBox                 config.TVBox           `json:"tvbox"`
+	Backends              []editableBackend      `json:"backends"`
+	Subs                  []editableSubscription `json:"subs"`
 }
 
 type editableBackend struct {
@@ -275,11 +276,11 @@ type editableSubscription struct {
 
 func (c editableConfig) Config() config.Config {
 	cfg := config.Config{
-		PublicBaseURL:      c.PublicBaseURL,
-		TrustXForwardedFor: c.TrustXForwardedFor,
-		TVBox:              c.TVBox,
-		Backends:           make([]config.Backend, 0, len(c.Backends)),
-		Subs:               make([]config.Subscription, 0, len(c.Subs)),
+		PublicBaseURL:         c.PublicBaseURL,
+		TrustForwardedHeaders: c.TrustForwardedHeaders || c.TrustXForwardedFor,
+		TVBox:                 c.TVBox,
+		Backends:              make([]config.Backend, 0, len(c.Backends)),
+		Subs:                  make([]config.Subscription, 0, len(c.Subs)),
 	}
 	for _, b := range c.Backends {
 		cfg.Backends = append(cfg.Backends, config.Backend{
@@ -366,10 +367,10 @@ func redactedConfig(cfg config.Config) map[string]any {
 		})
 	}
 	return map[string]any{
-		"public_base_url":       cfg.PublicBaseURL,
-		"trust_x_forwarded_for": cfg.TrustXForwardedFor,
-		"tvbox":                 cfg.TVBox,
-		"backends":              backends,
-		"subs":                  subs,
+		"public_base_url":         cfg.PublicBaseURL,
+		"trust_forwarded_headers": cfg.TrustForwardedHeaders,
+		"tvbox":                   cfg.TVBox,
+		"backends":                backends,
+		"subs":                    subs,
 	}
 }

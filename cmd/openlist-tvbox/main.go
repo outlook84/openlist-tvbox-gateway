@@ -330,7 +330,7 @@ func existingConfigCandidates() []string {
 }
 
 const starterConfigYAML = `public_base_url: http://127.0.0.1:18989
-trust_x_forwarded_for: false
+trust_forwarded_headers: false
 tvbox:
   site_key: openlist_tvbox
   site_name: OpenList

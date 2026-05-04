@@ -490,6 +490,69 @@ func TestAdminOriginUsesPublicBaseURL(t *testing.T) {
 	}
 }
 
+func TestAdminOriginUsesTrustedForwardedHostWithoutPublicBaseURL(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfigWithTrustForwardedHeaders("old-secret", true))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	req := httptest.NewRequest(http.MethodPost, "http://internal.example.com/admin/config/validate", strings.NewReader(`{"backends":[{"id":"b1","server":"https://openlist.example.com"}],"subs":[]}`))
+	req.Header.Set("Origin", "https://public.example.com")
+	req.Header.Set("X-Forwarded-Host", "public.example.com")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminOriginRejectsForwardedHostWithoutTrust(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	req := httptest.NewRequest(http.MethodPost, "http://internal.example.com/admin/config/validate", strings.NewReader(`{"backends":[{"id":"b1","server":"https://openlist.example.com"}],"subs":[]}`))
+	req.Header.Set("Origin", "https://public.example.com")
+	req.Header.Set("X-Forwarded-Host", "public.example.com")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminOriginRejectsUnknownOriginWithForwardedHost(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	req := httptest.NewRequest(http.MethodPost, "http://internal.example.com/admin/config/validate", strings.NewReader(`{"backends":[{"id":"b1","server":"https://openlist.example.com"}],"subs":[]}`))
+	req.Header.Set("Origin", "https://evil.example.com")
+	req.Header.Set("X-Forwarded-Host", "public.example.com")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAdminSecureCookieUsesHTTPSPublicBaseURL(t *testing.T) {
 	path := writeAdminConfig(t, `{
   "public_base_url": "https://public.example.com",
@@ -531,9 +594,9 @@ func TestAdminSecureCookieRequiresTrustedForwardedProto(t *testing.T) {
 		t.Fatalf("cookie should not trust X-Forwarded-Proto by default: %#v", cookie)
 	}
 
-	server.setTrustXForwardedFor(true)
+	server.setTrustForwardedHeaders(true)
 	req = httptest.NewRequest(http.MethodPost, "http://example.com/admin/login", strings.NewReader(`{"access_code":"123456789012"}`))
-	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Proto", "https, http")
 	rec = httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
 	cookie = adminSessionCookieFrom(t, rec)
@@ -1124,7 +1187,7 @@ func TestAdminAuthCooldownIgnoresForwardedForByDefault(t *testing.T) {
 }
 
 func TestAdminAuthCooldownCanTrustForwardedFor(t *testing.T) {
-	path := writeAdminConfig(t, testJSONConfigWithTrustXForwardedFor("old-secret", true))
+	path := writeAdminConfig(t, testJSONConfigWithTrustForwardedHeaders("old-secret", true))
 	t.Setenv(envAdminCode, "123456789012")
 	server, err := NewServer(Options{ConfigPath: path})
 	if err != nil {
@@ -1278,12 +1341,12 @@ func adminSessionCookieFrom(t *testing.T, rec *httptest.ResponseRecorder) *http.
 }
 
 func testJSONConfig(apiKey string) string {
-	return testJSONConfigWithTrustXForwardedFor(apiKey, false)
+	return testJSONConfigWithTrustForwardedHeaders(apiKey, false)
 }
 
-func testJSONConfigWithTrustXForwardedFor(apiKey string, trust bool) string {
+func testJSONConfigWithTrustForwardedHeaders(apiKey string, trust bool) string {
 	return `{
-  "trust_x_forwarded_for": ` + strconv.FormatBool(trust) + `,
+  "trust_forwarded_headers": ` + strconv.FormatBool(trust) + `,
   "backends": [
     {"id":"b1","server":"https://openlist.example.com","auth_type":"api_key","api_key":"` + apiKey + `"}
   ],

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"openlist-tvbox/internal/config"
+	"openlist-tvbox/internal/proxyheaders"
 )
 
 var SpiderFingerprint = "v2"
@@ -114,17 +115,8 @@ func BaseURL(cfg *config.Config, r *http.Request) string {
 	if cfg.PublicBaseURL != "" {
 		return cfg.PublicBaseURL
 	}
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	if forwarded := r.Header.Get("X-Forwarded-Proto"); forwarded != "" {
-		scheme = strings.Split(forwarded, ",")[0]
-	}
-	host := r.Host
-	if forwarded := r.Header.Get("X-Forwarded-Host"); forwarded != "" {
-		host = strings.Split(forwarded, ",")[0]
-	}
+	scheme := proxyheaders.Scheme(r, cfg.TrustForwardedHeaders)
+	host := proxyheaders.Host(r, cfg.TrustForwardedHeaders)
 	return strings.TrimRight(scheme+"://"+strings.TrimSpace(host), "/")
 }
 

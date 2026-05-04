@@ -298,12 +298,23 @@ func TestBuildUsesInjectedSpiderFingerprint(t *testing.T) {
 	}
 }
 
-func TestBaseURLUsesForwardedHeaders(t *testing.T) {
+func TestBaseURLIgnoresForwardedHeadersByDefault(t *testing.T) {
 	cfg := &config.Config{}
 	req := httptest.NewRequest("GET", "http://internal/sub", nil)
 	req.Host = "internal"
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Header.Set("X-Forwarded-Host", "public.example.com")
+	if got := BaseURL(cfg, req); got != "http://internal" {
+		t.Fatalf("BaseURL = %q", got)
+	}
+}
+
+func TestBaseURLUsesTrustedForwardedHeaders(t *testing.T) {
+	cfg := &config.Config{TrustForwardedHeaders: true}
+	req := httptest.NewRequest("GET", "http://internal/sub", nil)
+	req.Host = "internal"
+	req.Header.Set("X-Forwarded-Proto", "https, http")
+	req.Header.Set("X-Forwarded-Host", "public.example.com, internal")
 	if got := BaseURL(cfg, req); got != "https://public.example.com" {
 		t.Fatalf("BaseURL = %q", got)
 	}

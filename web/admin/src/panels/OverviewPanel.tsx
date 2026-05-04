@@ -46,8 +46,8 @@ export function OverviewPanel({ config, setConfig, t }: EditorProps) {
           <label className="check-row">
             <input
               type="checkbox"
-              checked={Boolean(config.trust_x_forwarded_for)}
-              onChange={(event) => updateConfig(setConfig, { trust_x_forwarded_for: event.target.checked })}
+              checked={Boolean(config.trust_forwarded_headers || config.trust_x_forwarded_for)}
+              onChange={(event) => updateConfig(setConfig, { trust_forwarded_headers: event.target.checked, trust_x_forwarded_for: undefined })}
             />
             <span>{t("trustForwarded")}</span>
             <HelpTip text={t("helpTrustForwarded")} />

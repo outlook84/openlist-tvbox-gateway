@@ -4,11 +4,13 @@
 # derived URL is not the URL TVBox should use.
 public_base_url: http://127.0.0.1:18989
 
-# Controls access-code cooldown client identity.
+# Controls whether forwarded headers from a reverse proxy are trusted.
 # Default: false. Keep false for direct public access.
 # Only enable when a trusted reverse proxy overwrites or strips client-supplied
-# X-Forwarded-For headers; otherwise clients can spoof it to bypass cooldown.
-trust_x_forwarded_for: false
+# X-Forwarded-For, X-Forwarded-Proto, and X-Forwarded-Host headers; otherwise
+# clients can spoof them to affect cooldowns, HTTPS detection, or Admin UI
+# same-origin checks.
+trust_forwarded_headers: false
 
 # Defaults for TVBox subscription entries emitted by subs[].path.
 # site_key must contain only letters, digits, underscore, or dash.
