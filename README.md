@@ -2,6 +2,13 @@
 
 ![openlist-tvbox screenshot](screenshot.png)
 
+<details>
+<summary>管理界面截图</summary>
+
+![openlist-tvbox admin screenshot](screenshot_admin.png)
+
+</details>
+
 `openlist-tvbox` 是一个面向 TVBox / CatVodSpider 的 OpenList / AList 中转网关。
 
 它把服务端配置好的 OpenList / AList 网盘内容转换成 TVBox 可识别的分类、目录、搜索、播放数据。TVBox 客户端只访问本项目提供的网关接口，不直接接触 OpenList API key、账号密码或登录 token。
