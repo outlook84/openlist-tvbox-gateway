@@ -85,7 +85,7 @@ docker run -d \
   ghcr.io/outlook84/openlist-tvbox-gateway:latest
 ```
 
-容器中启用 Admin UI 时建议挂载整个配置目录，而不是只读挂载单个配置文件，因为网关需要写入 `config.json`、`admin_setup_code` 和 `admin_access_code_hash`：
+容器中启用 Admin UI 时，请挂载整个配置目录，并确保运行用户对该目录可读写。
 
 ```bash
 docker run -d \

@@ -83,7 +83,7 @@ docker run -d \
   ghcr.io/outlook84/openlist-tvbox-gateway:latest
 ```
 
-To enable Admin UI in a container, mount the whole config directory instead of a single read-only config file, because the gateway needs to write `config.json`, `admin_setup_code`, and `admin_access_code_hash`:
+When using Admin UI, mount the whole config directory and make sure it is readable and writable by the gateway process.
 
 ```bash
 docker run -d \
