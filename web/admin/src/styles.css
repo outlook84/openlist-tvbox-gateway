@@ -1,30 +1,30 @@
 :root {
-  --color-bg: #eef3f8;
-  --color-bg-top: #f8fbff;
+  --color-bg: #f2f0ed;
+  --color-bg-top: #faf8f6;
   --color-surface: #ffffff;
-  --color-surface-muted: #fbfdff;
-  --color-surface-hover: #f6f9fc;
-  --color-text: #142033;
-  --color-text-muted: #607086;
-  --color-label: #334155;
-  --color-border: #bfd0e2;
-  --color-border-hover: #8ea9c7;
-  --color-border-panel: #d7e1ec;
-  --color-border-muted: #dfe8f2;
-  --color-primary: #0969da;
-  --color-primary-hover: #075fc6;
-  --color-danger: #c2412f;
-  --color-danger-strong: #b12c1c;
-  --color-danger-bg: #fff3f0;
-  --color-danger-hover: #fff5f3;
-  --color-danger-border: #f0a9a0;
-  --color-danger-border-muted: #f3b8af;
-  --color-success: #0b6b3a;
-  --color-success-bg: #e8f7ef;
-  --color-success-border: #b7e4c7;
-  --shadow-panel: 0 10px 30px rgb(26 47 75 / 7%);
-  --shadow-primary: 0 8px 18px rgb(9 105 218 / 18%);
-  --shadow-focus: 0 0 0 3px rgb(9 105 218 / 16%);
+  --color-surface-muted: #fcfbf9;
+  --color-surface-hover: #f7f5f2;
+  --color-text: #1c1917;
+  --color-text-muted: #78716c;
+  --color-label: #44403c;
+  --color-border: #d6d3d1;
+  --color-border-hover: #a8a29e;
+  --color-border-panel: #e7e5e4;
+  --color-border-muted: #ece9e5;
+  --color-primary: #4361ee;
+  --color-primary-hover: #3a56d4;
+  --color-danger: #dc2626;
+  --color-danger-strong: #b91c1c;
+  --color-danger-bg: #fef2f2;
+  --color-danger-hover: #fef7f7;
+  --color-danger-border: #fca5a5;
+  --color-danger-border-muted: #fecaca;
+  --color-success: #16a34a;
+  --color-success-bg: #f0fdf4;
+  --color-success-border: #bbf7d0;
+  --shadow-panel: 0 10px 30px rgb(100 90 70 / 7%);
+  --shadow-primary: 0 8px 18px rgb(67 97 238 / 22%);
+  --shadow-focus: 0 0 0 3px rgb(67 97 238 / 15%);
 
   color: var(--color-text);
   background: var(--color-bg);
@@ -69,8 +69,8 @@ button {
 }
 
 button.primary {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
+  background: linear-gradient(135deg, #5a73f7, #3a56d4);
+  border-color: #3a56d4;
   color: var(--color-surface);
   box-shadow: var(--shadow-primary);
 }
@@ -81,8 +81,8 @@ button:hover {
 }
 
 button.primary:hover {
-  background: var(--color-primary-hover);
-  border-color: var(--color-primary-hover);
+  background: linear-gradient(135deg, #4f68ec, #3249c0);
+  border-color: #3249c0;
 }
 
 button:focus-visible,
@@ -187,7 +187,7 @@ p {
 .topbar {
   align-items: center;
   backdrop-filter: blur(10px);
-  background: rgb(248 251 255 / 92%);
+  background: rgb(250 248 246 / 92%);
   border-bottom: 1px solid var(--color-border-muted);
   display: flex;
   gap: 20px;
@@ -483,6 +483,7 @@ button.tab + button.tab {
 button.tab.active {
   background: var(--color-surface-hover);
   border-color: transparent;
+  box-shadow: inset 0 -2px 0 var(--color-primary);
   color: var(--color-primary);
   font-weight: 700;
 }
