@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState } from "react";
 import { Check, LogOut, Save, TvMinimalPlay } from "lucide-react";
-import { getConfig, getMeta, getSession, logout, saveConfig, validateConfig } from "./api";
+import { getConfig, getMeta, getSession, logout, onAuthExpired, saveConfig, validateConfig } from "./api";
 import { APIError, type AdminConfig, type ConfigMeta, type SessionState } from "./types";
 import { detectLanguage, saveLanguage, translate, type Language } from "./i18n";
 import type { T } from "./shared";
@@ -50,6 +50,17 @@ export function App() {
 
   useEffect(() => {
     void load();
+  }, []);
+
+  useEffect(() => {
+    return onAuthExpired(() => {
+      setSession({ authenticated: false, setup_required: false });
+      setConfig(emptyConfig);
+      setMeta(null);
+      setMessage("");
+      setError("");
+      setLoading(false);
+    });
   }, []);
 
   async function handleValidate() {

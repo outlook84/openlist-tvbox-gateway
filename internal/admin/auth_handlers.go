@@ -142,7 +142,7 @@ func (s *Server) updateAdminAccessCode(w http.ResponseWriter, r *http.Request) {
 			s.authLimiter.RecordFailure(key)
 			s.logAuthFailure("admin access code update failed", r, "invalid_current_code")
 		}
-		writeAdminError(w, http.StatusUnauthorized, "auth.unauthorized", "unauthorized", nil)
+		writeAdminError(w, http.StatusUnauthorized, "admin.access_code.current_invalid", "current access code is incorrect", nil)
 		return
 	}
 	hash, err := hashAdminCode(req.NewAccessCode)

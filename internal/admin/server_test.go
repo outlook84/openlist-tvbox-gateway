@@ -387,6 +387,13 @@ func TestUpdateAdminAccessCodeRejectsWrongCurrentCode(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error_code"] != "admin.access_code.current_invalid" {
+		t.Fatalf("error_code = %v body = %s", body["error_code"], rec.Body.String())
+	}
 	if verifyAdminCode(server.adminHash(), "123456789012") != nil {
 		t.Fatal("current admin code should still verify")
 	}

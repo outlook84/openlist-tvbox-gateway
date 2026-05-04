@@ -50,6 +50,8 @@ export function localizeErrorCode(code: string, params: ErrorParams | undefined,
       return t("errorAdminSessionFailed");
     case "admin.access_code.update_failed":
       return t("errorAdminAccessCodeUpdateFailed");
+    case "admin.access_code.current_invalid":
+      return t("errorAdminCurrentAccessCodeInvalid");
     case "config.load_failed":
       return t("errorConfigLoadFailed");
     case "config.save_failed":

@@ -1,5 +1,30 @@
 import { APIError, type AdminConfig, type Backend, type BackendTestResult, type ConfigMeta, type ErrorParams, type LogResponse, type SessionState } from "./types";
 
+const authExpiredListeners = new Set<() => void>();
+
+export function onAuthExpired(listener: () => void) {
+  authExpiredListeners.add(listener);
+  return () => {
+    authExpiredListeners.delete(listener);
+  };
+}
+
+function notifyAuthExpired() {
+  authExpiredListeners.forEach((listener) => listener());
+}
+
+function getRequestPathname(path: string) {
+  return new URL(path, "http://localhost").pathname;
+}
+
+export function shouldNotifyAuthExpired(path: string, status: number, code?: string) {
+  const pathname = getRequestPathname(path);
+  if (status !== 401) return false;
+  if (["/admin/session", "/admin/login", "/admin/setup"].includes(pathname)) return false;
+  if (pathname === "/admin/access-code" && code === "admin.access_code.current_invalid") return false;
+  return true;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     credentials: "same-origin",
@@ -9,6 +34,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
   if (!response.ok) {
+    if (shouldNotifyAuthExpired(path, response.status, data.error_code)) {
+      notifyAuthExpired();
+    }
     throw new APIError(data.error || data.message || `HTTP ${response.status}`, data.error_code, data.error_params as ErrorParams | undefined);
   }
   return data as T;
