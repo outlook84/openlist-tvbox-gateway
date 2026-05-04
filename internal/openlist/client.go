@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -105,7 +106,11 @@ func (c *Client) postOnce(ctx context.Context, backend config.Backend, apiPath s
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, backend.Server+apiPath, bytes.NewReader(data))
+	requestURL, err := backendAPIURL(backend.Server, apiPath)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
@@ -210,7 +215,11 @@ func (c *Client) login(ctx context.Context, backend config.Backend) (string, err
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, backend.Server+"/api/auth/login", bytes.NewReader(data))
+	requestURL, err := backendAPIURL(backend.Server, "/api/auth/login")
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(data))
 	if err != nil {
 		return "", err
 	}
@@ -316,6 +325,35 @@ func openListErrorKind(err error) string {
 
 func clientID(backend config.Backend) string {
 	return "openlist-tvbox-" + backend.ID
+}
+
+func backendAPIURL(server, apiPath string) (string, error) {
+	switch apiPath {
+	case "/api/fs/list", "/api/fs/get", "/api/fs/search", "/api/auth/login":
+	default:
+		return "", fmt.Errorf("unsupported openlist api path")
+	}
+	u, err := url.Parse(strings.TrimSpace(server))
+	if err != nil {
+		return "", fmt.Errorf("invalid backend server URL")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("backend server URL must use http or https")
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("backend server URL must include host")
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("backend server URL must not include credentials")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("backend server URL must not include query or fragment")
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + apiPath
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String(), nil
 }
 
 type authorizationError struct{}

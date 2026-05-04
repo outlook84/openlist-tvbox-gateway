@@ -239,6 +239,42 @@ func TestClientPasswordRefreshPermissionDeniedDoesNotRelogin(t *testing.T) {
 	}
 }
 
+func TestBackendAPIURLBuildsAllowedOpenListPaths(t *testing.T) {
+	got, err := backendAPIURL(" https://openlist.example.com/base/ ", "/api/fs/list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "https://openlist.example.com/base/api/fs/list" {
+		t.Fatalf("url = %q", got)
+	}
+}
+
+func TestBackendAPIURLRejectsUnsafeServerURL(t *testing.T) {
+	tests := []struct {
+		name   string
+		server string
+	}{
+		{name: "relative", server: "/openlist"},
+		{name: "ftp", server: "ftp://openlist.example.com"},
+		{name: "userinfo", server: "https://user:pass@openlist.example.com"},
+		{name: "query", server: "https://openlist.example.com?token=secret"},
+		{name: "fragment", server: "https://openlist.example.com#token"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got, err := backendAPIURL(tt.server, "/api/fs/list"); err == nil {
+				t.Fatalf("backendAPIURL() = %q, nil error", got)
+			}
+		})
+	}
+}
+
+func TestBackendAPIURLRejectsUnsupportedAPIPath(t *testing.T) {
+	if got, err := backendAPIURL("https://openlist.example.com", "/api/fs/remove"); err == nil {
+		t.Fatalf("backendAPIURL() = %q, nil error", got)
+	}
+}
+
 func writeOpenListJSON(t *testing.T, w http.ResponseWriter, value any) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")
