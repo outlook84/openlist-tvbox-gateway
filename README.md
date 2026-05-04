@@ -17,6 +17,7 @@ English documentation: [README.en.md](README.en.md)
 - 支持目录浏览、排序筛选、详情页播放列表、搜索和播放地址解析。
 - 支持同目录字幕识别并随播放结果返回。
 - 支持给订阅配置数字访问码，避免订阅地址被随意使用。
+- 支持 Web Admin UI，通过浏览器维护 JSON 配置、测试后端连通性并查看运行日志。
 - 内置 TVBox Spider JavaScript，订阅配置可直接引用网关内置脚本。
 - 网关只开放明确的 TVBox 专用接口，不提供任意 OpenList API 转发或任意 URL 代理。
 
@@ -27,31 +28,50 @@ English documentation: [README.en.md](README.en.md)
 - [takagen99/Box](https://github.com/takagen99/Box)
 - [FongMi/TV](https://github.com/FongMi/TV)
 
-## 快速开始
-
-1. 准备配置文件。
-
-   从 [config.example.yaml](config.example.yaml) 复制一份为 `config.yaml`，按需修改后端和订阅入口。完整字段说明见下方“配置说明”。
-
-2. 启动网关。
-
-   ```bash
-   ./openlist-tvbox -config config.yaml -listen :18989
-   ```
-
-3. 在 TVBox 中填入订阅地址。
-
-   ```text
-   http://你的网关地址:18989/sub
-   ```
-
-   反向代理、NAT、CDN 场景建议在配置中设置 `public_base_url`，确保 TVBox 拿到的是外部可访问地址。
-
 ## 部署方式
 
 ### 使用发布包
 
-从项目 Release 下载与你的系统匹配的压缩包，解压后得到 `openlist-tvbox` 或 `openlist-tvbox.exe`，再按上面的快速开始准备配置并启动。
+从项目 Release 下载与你的系统匹配的压缩包，解压后得到 `openlist-tvbox` 或 `openlist-tvbox.exe`。
+
+从 [config.example.yaml](config.example.yaml) 复制一份为 `config.yaml`，按需修改后端和订阅入口，然后启动：
+
+```bash
+./openlist-tvbox -config config.yaml -listen :18989
+```
+
+### 启用 Web Admin UI
+
+Web Admin UI 仅在 `-config` 指向 JSON 配置文件时启用，访问地址为：
+
+```text
+http://你的网关地址:18989/admin
+```
+
+首次启动时，如果未提供管理员访问码，网关会在配置文件同目录生成 `admin_setup_code`。打开 `/admin` 后输入这个 setup code，并设置一个 8 到 64 位、不能包含空白字符的管理员访问码。初始化完成后，网关会在同目录写入 `admin_access_code_hash`，并删除 `admin_setup_code`。
+
+也可以用环境变量预置管理员访问码，适合容器或自动化部署：
+
+```bash
+OPENLIST_TVBOX_ADMIN_ACCESS_CODE='请换成强访问码' ./openlist-tvbox -config config.json -listen :18989
+```
+
+或者预置 bcrypt hash：
+
+```bash
+OPENLIST_TVBOX_ADMIN_ACCESS_CODE_HASH='$2a$...' ./openlist-tvbox -config config.json -listen :18989
+```
+
+Admin UI 会直接写入 JSON 配置文件，因此配置目录必须可写。使用 YAML 配置时网关仍可正常提供 TVBox 接口，但不会挂载 `/admin`；如果需要把不含 `api_key_env`、`password_env` 等环境变量密钥引用的 YAML 配置切到 Admin UI 管理，可以先导出 JSON：
+
+```bash
+./openlist-tvbox -config config.yaml -print-config-json > config.json
+./openlist-tvbox -config config.json -listen :18989
+```
+
+注意：Admin UI 使用的可编辑 JSON 配置不支持 `api_key_env`、`password_env` 这类环境变量密钥引用；需要在 UI 中保存密钥。请限制 `/admin` 的公网访问范围，建议放在 HTTPS 反向代理后，并在反代场景设置 `public_base_url`；如需信任 `X-Forwarded-Proto`，同时设置 `trust_x_forwarded_for: true` 或在 UI 中开启对应选项。
+
+如果从源码自行构建，请使用 `pnpm build:go` 或先执行 `pnpm build` 再执行 Go 构建，确保 Admin UI 前端资源被写入 `internal/admin/assets` 并嵌入二进制。
 
 ### 容器部署
 
@@ -65,9 +85,22 @@ docker run -d \
   ghcr.io/outlook84/openlist-tvbox-gateway:latest
 ```
 
+容器中启用 Admin UI 时建议挂载整个配置目录，而不是只读挂载单个配置文件，因为网关需要写入 `config.json`、`admin_setup_code` 和 `admin_access_code_hash`：
+
+```bash
+docker run -d \
+  --name openlist-tvbox \
+  -p 18989:18989 \
+  -v /path/to/openlist-tvbox:/config \
+  -e OPENLIST_TVBOX_CONFIG=config.json \
+  ghcr.io/outlook84/openlist-tvbox-gateway:latest
+```
+
+启动后访问 `http://你的网关地址:18989/admin`。首次初始化需要的 `admin_setup_code` 位于宿主机 `/path/to/openlist-tvbox/admin_setup_code`。
+
 ## 接入 TVBox
 
-快速开始中的 `/sub` 是默认订阅入口。如果你在配置中定义了多个订阅入口，每个 `subs[].path` 都是一个独立订阅 URL，例如：
+`/sub` 是默认订阅入口。如果你在配置中定义了多个订阅入口，每个 `subs[].path` 都是一个独立订阅 URL，例如：
 
 ```text
 http://你的网关地址:18989/sub
@@ -76,6 +109,8 @@ http://你的网关地址:18989/sub/shows
 ```
 
 TVBox 会从订阅中加载内置 Spider 脚本，后续的分类、目录、搜索和播放请求都会回到网关处理。
+
+反向代理、NAT、CDN 场景建议在配置中设置 `public_base_url`，确保 TVBox 拿到的是外部可访问地址。
 
 ## 访问码
 

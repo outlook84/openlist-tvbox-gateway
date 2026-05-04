@@ -15,6 +15,7 @@ Simplified Chinese documentation: [README.md](README.md)
 - Directory browsing, sorting filters, detail playlists, search, and playback URL resolution.
 - Subtitle detection for files in the same directory.
 - Optional numeric access code for subscription protection.
+- Web Admin UI for editing JSON config, testing backend connectivity, and viewing runtime logs.
 - Embedded TVBox Spider JavaScript served by the gateway.
 - No arbitrary OpenList API forwarding and no arbitrary URL proxying.
 
@@ -25,31 +26,50 @@ The following TVBox app shells have been tested:
 - [takagen99/Box](https://github.com/takagen99/Box)
 - [FongMi/TV](https://github.com/FongMi/TV)
 
-## Quick Start
-
-1. Prepare a config file.
-
-   Copy [config.example.en.yaml](config.example.en.yaml) to `config.yaml`, then adjust the backends and subscription entries as needed. See "Configuration" below for field notes.
-
-2. Start the gateway.
-
-   ```bash
-   ./openlist-tvbox -config config.yaml -listen :18989
-   ```
-
-3. Add the subscription URL to TVBox.
-
-   ```text
-   http://your-gateway-host:18989/sub
-   ```
-
-   If the gateway is behind a reverse proxy, NAT, or CDN, set `public_base_url` so TVBox receives the externally reachable URL.
-
 ## Deployment
 
 ### Release Binary
 
-Download the archive for your operating system from the project releases, extract it, and get `openlist-tvbox` or `openlist-tvbox.exe`. Then follow the quick start above to prepare the config and start the gateway.
+Download the archive for your operating system from the project releases, then extract `openlist-tvbox` or `openlist-tvbox.exe`.
+
+Copy [config.example.en.yaml](config.example.en.yaml) to `config.yaml`, adjust the backends and subscription entries, then start the gateway:
+
+```bash
+./openlist-tvbox -config config.yaml -listen :18989
+```
+
+### Enable Web Admin UI
+
+The Web Admin UI is enabled only when `-config` points to a JSON config file. Open:
+
+```text
+http://your-gateway-host:18989/admin
+```
+
+On first startup, if no admin access code is provided, the gateway creates `admin_setup_code` next to the config file. Open `/admin`, enter that setup code, and set an admin access code. The admin access code must be 8 to 64 characters and must not contain whitespace or control characters. After setup, the gateway writes `admin_access_code_hash` in the same directory and removes `admin_setup_code`.
+
+You can also preconfigure the admin access code with an environment variable, which is useful for containers and automated deployments:
+
+```bash
+OPENLIST_TVBOX_ADMIN_ACCESS_CODE='replace-with-a-strong-code' ./openlist-tvbox -config config.json -listen :18989
+```
+
+Or preconfigure a bcrypt hash:
+
+```bash
+OPENLIST_TVBOX_ADMIN_ACCESS_CODE_HASH='$2a$...' ./openlist-tvbox -config config.json -listen :18989
+```
+
+The Admin UI writes directly to the JSON config file, so the config directory must be writable. YAML configs still work for TVBox gateway APIs, but `/admin` is not mounted for YAML. To move an existing YAML config that does not use env-backed secrets such as `api_key_env` or `password_env` to Admin UI management, export it as JSON first:
+
+```bash
+./openlist-tvbox -config config.yaml -print-config-json > config.json
+./openlist-tvbox -config config.json -listen :18989
+```
+
+Note: editable JSON config used by Admin UI does not support env-backed secrets such as `api_key_env` or `password_env`; save secrets in the UI instead. Restrict public access to `/admin`; HTTPS behind a reverse proxy is recommended. In reverse-proxy deployments, set `public_base_url`; if you need to trust `X-Forwarded-Proto`, also set `trust_x_forwarded_for: true` or enable the matching option in the UI.
+
+If you build from source, use `pnpm build:go`, or run `pnpm build` before the Go build, so the Admin UI frontend assets are written to `internal/admin/assets` and embedded into the binary.
 
 ### Container Deployment
 
@@ -57,15 +77,28 @@ Example:
 
 ```bash
 docker run -d \
-  --name openlist-tvbox-gateway \
+  --name openlist-tvbox \
   -p 18989:18989 \
   -v /path/to/config.yaml:/config/config.yaml:ro \
-  ghcr.io/outlook84/openlist-tvbox:latest
+  ghcr.io/outlook84/openlist-tvbox-gateway:latest
 ```
+
+To enable Admin UI in a container, mount the whole config directory instead of a single read-only config file, because the gateway needs to write `config.json`, `admin_setup_code`, and `admin_access_code_hash`:
+
+```bash
+docker run -d \
+  --name openlist-tvbox \
+  -p 18989:18989 \
+  -v /path/to/openlist-tvbox:/config \
+  -e OPENLIST_TVBOX_CONFIG=config.json \
+  ghcr.io/outlook84/openlist-tvbox-gateway:latest
+```
+
+Then open `http://your-gateway-host:18989/admin`. The first-run `admin_setup_code` is available at `/path/to/openlist-tvbox/admin_setup_code` on the host.
 
 ## TVBox Setup
 
-The `/sub` path in the quick start is the default subscription endpoint. If your config defines multiple subscriptions, every `subs[].path` is an independent TVBox subscription URL, for example:
+`/sub` is the default subscription endpoint. If your config defines multiple subscriptions, every `subs[].path` is an independent TVBox subscription URL, for example:
 
 ```text
 http://your-gateway-host:18989/sub
@@ -74,6 +107,8 @@ http://your-gateway-host:18989/sub/shows
 ```
 
 TVBox loads the embedded Spider script from the subscription. Category, listing, search, detail, and play requests are then handled by the gateway.
+
+If the gateway is behind a reverse proxy, NAT, or CDN, set `public_base_url` so TVBox receives the externally reachable URL.
 
 ## Access Code
 
