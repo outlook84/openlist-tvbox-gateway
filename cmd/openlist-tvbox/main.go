@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"log/slog"
@@ -26,15 +27,32 @@ func main() {
 	var listen string
 	var hashPassword string
 	var printConfigExample bool
+	var printConfigJSON bool
 	flag.StringVar(&configPath, "config", getenv("OPENLIST_TVBOX_CONFIG", "config.json"), "path to config file")
 	flag.StringVar(&listen, "listen", getenv("OPENLIST_TVBOX_LISTEN", ":18989"), "HTTP listen address")
 	flag.StringVar(&hashPassword, "hash-password", "", "print a bcrypt hash for an access code and exit")
 	flag.BoolVar(&printConfigExample, "print-config-example", false, "print a starter YAML config and exit")
+	flag.BoolVar(&printConfigJSON, "print-config-json", false, "print the config as declarative JSON and exit")
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if printConfigExample {
 		_, _ = os.Stdout.WriteString(starterConfigYAML)
+		return
+	}
+	if printConfigJSON {
+		cfg, err := config.LoadEditable(configPath)
+		if err != nil {
+			logConfigLoadError(logger, configPath, err)
+			os.Exit(1)
+		}
+		data, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			logger.Error("marshal config json failed", "error", err)
+			os.Exit(1)
+		}
+		data = append(data, '\n')
+		_, _ = os.Stdout.Write(data)
 		return
 	}
 	if hashPassword != "" {

@@ -102,6 +102,21 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+func LoadEditable(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var cfg Config
+	if err := unmarshalConfig(path, data, &cfg); err != nil {
+		return nil, err
+	}
+	if err := cfg.ValidateEditable(); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
 func EnsureEditableJSON(path string) error {
 	if !IsJSONPath(path) {
 		return nil
@@ -150,20 +165,21 @@ func unmarshalConfig(path string, data []byte, cfg *Config) error {
 }
 
 func (c *Config) Validate() error {
-	return c.validate(validateOptions{})
+	return c.validate(validateOptions{ResolveEnvSecrets: true})
 }
 
 // ValidateEditable is for the JSON admin editor. Editable JSON stores secrets
 // directly and intentionally rejects env-backed secrets; use YAML for env-only
 // secret configuration.
 func (c *Config) ValidateEditable() error {
-	return c.validate(validateOptions{AllowEmptySubs: true, ReservedHTTPPrefixes: []string{"/admin"}, RejectEnvSecrets: true})
+	return c.validate(validateOptions{AllowEmptySubs: true, ReservedHTTPPrefixes: []string{"/admin"}, RejectEnvSecrets: true, ResolveEnvSecrets: true})
 }
 
 type validateOptions struct {
 	AllowEmptySubs       bool
 	ReservedHTTPPrefixes []string
 	RejectEnvSecrets     bool
+	ResolveEnvSecrets    bool
 }
 
 func (c *Config) validate(opts validateOptions) error {
@@ -208,7 +224,7 @@ func (c *Config) validate(opts validateOptions) error {
 				return CodedErrorf("backend.env_secret.unsupported", map[string]any{"backend_id": b.ID}, "backend %q env-backed secrets are not supported in editable JSON config", b.ID)
 			}
 		}
-		if err := normalizeBackendAuth(b); err != nil {
+		if err := normalizeBackendAuth(b, opts.ResolveEnvSecrets); err != nil {
 			return err
 		}
 	}
@@ -304,7 +320,7 @@ func reservedHTTPPrefix(path string, prefixes []string) (string, bool) {
 	return "", false
 }
 
-func normalizeBackendAuth(b *Backend) error {
+func normalizeBackendAuth(b *Backend, resolveEnvSecrets bool) error {
 	b.AuthType = strings.TrimSpace(b.AuthType)
 	if b.AuthType == "" {
 		b.AuthType = "anonymous"
@@ -326,7 +342,7 @@ func normalizeBackendAuth(b *Backend) error {
 		if b.APIKey != "" && b.APIKeyEnv != "" {
 			return CodedErrorf("backend.secret.multiple_sources", map[string]any{"backend_id": b.ID, "secret": "api_key"}, "backend %q must set only one of api_key or api_key_env", b.ID)
 		}
-		if b.APIKeyEnv != "" {
+		if b.APIKeyEnv != "" && resolveEnvSecrets {
 			value, ok := os.LookupEnv(b.APIKeyEnv)
 			if !ok {
 				return CodedErrorf("backend.env_secret.missing", map[string]any{"backend_id": b.ID, "env": b.APIKeyEnv}, "backend %q api_key_env %q is not set", b.ID, b.APIKeyEnv)
@@ -336,7 +352,7 @@ func normalizeBackendAuth(b *Backend) error {
 				return CodedErrorf("backend.env_secret.empty", map[string]any{"backend_id": b.ID, "env": b.APIKeyEnv}, "backend %q api_key_env %q is empty", b.ID, b.APIKeyEnv)
 			}
 		}
-		if b.APIKey == "" {
+		if b.APIKey == "" && b.APIKeyEnv == "" {
 			return CodedErrorf("backend.auth.api_key_required", map[string]any{"backend_id": b.ID}, "backend %q api_key auth requires api_key or api_key_env", b.ID)
 		}
 	case "password":
@@ -349,14 +365,14 @@ func normalizeBackendAuth(b *Backend) error {
 		if b.Password != "" && b.PasswordEnv != "" {
 			return CodedErrorf("backend.secret.multiple_sources", map[string]any{"backend_id": b.ID, "secret": "password"}, "backend %q must set only one of password or password_env", b.ID)
 		}
-		if b.PasswordEnv != "" {
+		if b.PasswordEnv != "" && resolveEnvSecrets {
 			value, ok := os.LookupEnv(b.PasswordEnv)
 			if !ok {
 				return CodedErrorf("backend.env_secret.missing", map[string]any{"backend_id": b.ID, "env": b.PasswordEnv}, "backend %q password_env %q is not set", b.ID, b.PasswordEnv)
 			}
 			b.Password = value
 		}
-		if b.Password == "" {
+		if b.Password == "" && b.PasswordEnv == "" {
 			return CodedErrorf("backend.auth.password_required", map[string]any{"backend_id": b.ID}, "backend %q password auth requires password or password_env", b.ID)
 		}
 	default:

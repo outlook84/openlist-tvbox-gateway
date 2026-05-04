@@ -19,6 +19,30 @@ import (
 	"openlist-tvbox/internal/openlist"
 )
 
+func TestPrintConfigJSONRejectsEnvSecretReferences(t *testing.T) {
+	t.Setenv("OPENLIST_TEST_API_KEY", "real-secret")
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, path, `backends:
+  - id: b1
+    server: https://openlist.example.com
+    auth_type: api_key
+    api_key_env: OPENLIST_TEST_API_KEY
+subs:
+  - id: default
+    mounts:
+      - id: media
+        backend: b1
+        path: /Media
+`)
+	_, err := config.LoadEditable(path)
+	if err == nil {
+		t.Fatal("expected env secret reference error")
+	}
+	if got := config.ErrorCode(err, ""); got != "backend.env_secret.unsupported" {
+		t.Fatalf("error code = %q, want backend.env_secret.unsupported; err = %v", got, err)
+	}
+}
+
 func TestWatchConfigReloadsChangedFile(t *testing.T) {
 	path := writeTestConfig(t, "Movies")
 	ctx, cancel := context.WithCancel(context.Background())

@@ -176,6 +176,34 @@ subs:
 	}
 }
 
+func TestLoadEditableRejectsEnvSecretReferences(t *testing.T) {
+	t.Setenv("OPENLIST_TEST_API_KEY", "real-secret")
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := []byte(`
+backends:
+  - id: main
+    server: https://openlist.example.com
+    auth_type: api_key
+    api_key_env: OPENLIST_TEST_API_KEY
+subs:
+  - id: default
+    mounts:
+      - id: media
+        backend: main
+        path: /Media
+`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadEditable(path)
+	if err == nil {
+		t.Fatal("expected env secret reference error")
+	}
+	if got := ErrorCode(err, ""); got != "backend.env_secret.unsupported" {
+		t.Fatalf("error code = %q, want backend.env_secret.unsupported; err = %v", got, err)
+	}
+}
+
 func TestSubTVBoxDefaultsSiteKeyFromSubID(t *testing.T) {
 	cfg := Config{
 		TVBox:    TVBox{SiteKey: "global_key", SiteName: "Global", Timeout: 20},
