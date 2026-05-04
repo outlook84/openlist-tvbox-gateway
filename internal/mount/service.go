@@ -223,7 +223,7 @@ func (s *Service) SearchForSub(ctx context.Context, subID, keyword string) (catv
 			items, err := s.client.Search(ctx, backend, mountCfg.Path, keyword, s.password(mountCfg, mountCfg.Path))
 			if err != nil {
 				if s.logger != nil {
-					s.logger.Warn("search mount failed", "mount", mountCfg.ID, "error", err)
+					s.logger.Warn("search mount failed", "mount", mountCfg.ID, "error_kind", serviceErrorKind(err))
 				}
 				return
 			}
@@ -804,6 +804,25 @@ func standardFilters() []catvod.Filter {
 
 func paged(vods []catvod.Vod) catvod.Result {
 	return catvod.Result{List: vods, Page: 1, PageCount: 1, Limit: len(vods), Total: len(vods)}
+}
+
+func serviceErrorKind(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "authorization"):
+		return "authorization"
+	case strings.Contains(msg, "permission denied"):
+		return "permission"
+	case strings.Contains(msg, "openlist request failed"):
+		return "upstream_request"
+	case strings.Contains(msg, "openlist"):
+		return "upstream"
+	default:
+		return "request"
+	}
 }
 
 func splitRel(rel string) (string, string) {

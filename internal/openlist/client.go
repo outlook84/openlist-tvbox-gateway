@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -92,6 +93,7 @@ func (c *Client) Search(ctx context.Context, backend config.Backend, path, keywo
 func (c *Client) post(ctx context.Context, backend config.Backend, apiPath string, body any, out any) error {
 	err := c.postOnce(ctx, backend, apiPath, body, out, false)
 	if _, ok := err.(authorizationError); ok && authType(backend) == "password" {
+		c.logWarn("openlist authorization failed; retrying login", backend, "api", apiPath)
 		c.invalidateToken(backend.ID)
 		err = c.postOnce(ctx, backend, apiPath, body, out, true)
 	}
@@ -114,10 +116,15 @@ func (c *Client) postOnce(ctx context.Context, backend config.Backend, apiPath s
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		c.logWarn("openlist request failed", backend, "api", apiPath, "reason", safeOpenListError(err))
 		return fmt.Errorf("openlist request failed")
 	}
 	defer resp.Body.Close()
-	return decodeResponse(resp, out)
+	if err := decodeResponse(resp, out); err != nil {
+		c.logOpenListDecodeError(backend, apiPath, resp.StatusCode, err)
+		return err
+	}
+	return nil
 }
 
 func (c *Client) authorize(ctx context.Context, req *http.Request, backend config.Backend, forceLogin bool) error {
@@ -194,6 +201,7 @@ func (c *Client) invalidateToken(backendID string) {
 }
 
 func (c *Client) login(ctx context.Context, backend config.Backend) (string, error) {
+	c.logDebug("openlist login started", backend)
 	body := map[string]string{
 		"username": backend.User,
 		"password": backend.Password,
@@ -211,6 +219,7 @@ func (c *Client) login(ctx context.Context, backend config.Backend) (string, err
 	req.Header.Set("Client-Id", clientID(backend))
 	resp, err := c.http.Do(req)
 	if err != nil {
+		c.logWarn("openlist login request failed", backend, "reason", safeOpenListError(err))
 		return "", fmt.Errorf("openlist login failed")
 	}
 	defer resp.Body.Close()
@@ -221,14 +230,88 @@ func (c *Client) login(ctx context.Context, backend config.Backend) (string, err
 	}
 	if err := decodeResponse(resp, &out); err != nil {
 		if _, ok := err.(authorizationError); ok {
+			c.logWarn("openlist login authorization failed", backend, "status", resp.StatusCode)
 			return "", fmt.Errorf("openlist login failed; check backend username/password")
 		}
+		c.logOpenListDecodeError(backend, "/api/auth/login", resp.StatusCode, err)
 		return "", err
 	}
 	if out.Data.Token == "" {
+		c.logWarn("openlist login returned empty token", backend)
 		return "", fmt.Errorf("openlist login returned empty token")
 	}
+	c.logDebug("openlist login completed", backend)
 	return out.Data.Token, nil
+}
+
+func (c *Client) logOpenListDecodeError(backend config.Backend, apiPath string, status int, err error) {
+	switch err.(type) {
+	case authorizationError:
+		c.logWarn("openlist authorization failed", backend, "api", apiPath, "status", status)
+	case permissionError:
+		c.logWarn("openlist permission denied", backend, "api", apiPath, "status", status, "error_kind", openListErrorKind(err))
+	default:
+		level := slog.LevelWarn
+		if status >= 500 {
+			level = slog.LevelError
+		}
+		c.log(level, "openlist api failed", backend, "api", apiPath, "status", status, "error_kind", openListErrorKind(err))
+	}
+}
+
+func (c *Client) logDebug(message string, backend config.Backend, attrs ...any) {
+	c.log(slog.LevelDebug, message, backend, attrs...)
+}
+
+func (c *Client) logWarn(message string, backend config.Backend, attrs ...any) {
+	c.log(slog.LevelWarn, message, backend, attrs...)
+}
+
+func (c *Client) log(level slog.Level, message string, backend config.Backend, attrs ...any) {
+	if c.logger == nil {
+		return
+	}
+	fields := []any{"backend", backend.ID, "auth_type", authType(backend)}
+	fields = append(fields, attrs...)
+	c.logger.Log(context.Background(), level, message, fields...)
+}
+
+func safeOpenListError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.Canceled) {
+		return "context canceled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "deadline exceeded"
+	}
+	return "request failed"
+}
+
+func openListErrorKind(err error) string {
+	if err == nil {
+		return ""
+	}
+	switch err.(type) {
+	case authorizationError:
+		return "authorization"
+	case permissionError:
+		return "permission"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "invalid openlist response"):
+		return "invalid_response"
+	case strings.Contains(msg, "invalid openlist response shape"):
+		return "invalid_response_shape"
+	case strings.Contains(msg, "openlist returned status"):
+		return "http_status"
+	case strings.Contains(msg, "openlist api error"):
+		return "api_error"
+	default:
+		return "unknown"
+	}
 }
 
 func clientID(backend config.Backend) string {

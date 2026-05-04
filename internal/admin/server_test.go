@@ -1,8 +1,10 @@
 package admin
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"openlist-tvbox/internal/auth"
 	"openlist-tvbox/internal/config"
+	"openlist-tvbox/internal/logging"
 )
 
 func init() {
@@ -167,6 +170,150 @@ func TestAdminLogoutClearsSession(t *testing.T) {
 	server.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminLogsRequireAuth(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	buffer := logging.NewBuffer(10)
+	server, err := NewServer(Options{ConfigPath: path, LogBuffer: buffer})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/logs", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminLogsReturnsBufferedEntries(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	buffer := logging.NewBuffer(10)
+	buffer.Append(logging.Entry{Time: time.Unix(1, 0), Level: "INFO", Message: "first"})
+	buffer.Append(logging.Entry{Time: time.Unix(2, 0), Level: "WARN", Message: "second", Attrs: map[string]any{"operation": "test"}})
+	server, err := NewServer(Options{ConfigPath: path, LogBuffer: buffer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/logs?limit=10&level=warn", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Logs []logging.Entry `json:"logs"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Logs) != 1 || got.Logs[0].Message != "second" {
+		t.Fatalf("logs = %#v", got.Logs)
+	}
+}
+
+func TestAdminLogStreamReceivesLiveEntryAndCloses(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	buffer := logging.NewBuffer(10)
+	server, err := NewServer(Options{ConfigPath: path, LogBuffer: buffer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/admin/logs/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(cookie)
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	done := make(chan string, 1)
+	go func() {
+		reader := bufio.NewReader(resp.Body)
+		var text strings.Builder
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				done <- text.String()
+				return
+			}
+			text.WriteString(line)
+			if strings.Contains(text.String(), "stream-test") {
+				done <- text.String()
+				return
+			}
+		}
+	}()
+	buffer.Append(logging.Entry{Time: time.Now(), Level: "ERROR", Message: "stream-test"})
+
+	select {
+	case text := <-done:
+		if !strings.Contains(text, "stream-test") {
+			t.Fatalf("stream text = %q", text)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream entry")
+	}
+}
+
+func TestAdminLogStreamStopsOnServerShutdown(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	buffer := logging.NewBuffer(10)
+	server, err := NewServer(Options{ConfigPath: path, LogBuffer: buffer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+	ts := httptest.NewServer(server.Handler())
+	t.Cleanup(ts.Close)
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/admin/logs/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(cookie)
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.ReadAll(resp.Body)
+		done <- err
+	}()
+	server.Shutdown()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("read error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream did not stop after shutdown")
 	}
 }
 

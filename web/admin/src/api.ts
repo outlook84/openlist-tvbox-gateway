@@ -1,4 +1,4 @@
-import { APIError, type AdminConfig, type Backend, type BackendTestResult, type ConfigMeta, type ErrorParams, type SessionState } from "./types";
+import { APIError, type AdminConfig, type Backend, type BackendTestResult, type ConfigMeta, type ErrorParams, type LogResponse, type SessionState } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -70,4 +70,9 @@ export function saveConfig(config: AdminConfig) {
     method: "PUT",
     body: JSON.stringify(config),
   });
+}
+
+export function getLogs(limit = 300, level = "debug") {
+  const params = new URLSearchParams({ limit: String(limit), level });
+  return request<LogResponse>(`/admin/logs?${params.toString()}`);
 }

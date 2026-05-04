@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"openlist-tvbox/internal/auth"
 	"openlist-tvbox/internal/config"
+	"openlist-tvbox/internal/logging"
 	"openlist-tvbox/internal/openlist"
 )
 
@@ -55,6 +57,9 @@ type Server struct {
 	saveMu        sync.Mutex
 	setupMu       sync.Mutex
 	authLimiter   *auth.FailureLimiter
+	logBuffer     *logging.Buffer
+	shutdown      chan struct{}
+	shutdownOnce  sync.Once
 	sessionMu     sync.Mutex
 	sessions      map[string]adminSession
 	trustMu       sync.RWMutex
@@ -71,6 +76,7 @@ type Options struct {
 	ConfigPath string
 	Listen     string
 	Logger     *slog.Logger
+	LogBuffer  *logging.Buffer
 	OnSaved    func(*config.Config)
 }
 
@@ -100,10 +106,18 @@ func NewServer(opts Options) (*Server, error) {
 		setupCode:     state.SetupCode,
 		onSaved:       opts.OnSaved,
 		authLimiter:   auth.NewFailureLimiter(auth.DefaultFailureLimit, auth.DefaultFailureCooldown),
+		logBuffer:     opts.LogBuffer,
+		shutdown:      make(chan struct{}),
 		sessions:      map[string]adminSession{},
 		trustXFF:      trustXFF,
 		publicBaseURL: publicBaseURL,
 	}, nil
+}
+
+func (s *Server) Shutdown() {
+	s.shutdownOnce.Do(func() {
+		close(s.shutdown)
+	})
 }
 
 func (s *Server) Handler() http.Handler {
@@ -115,6 +129,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/session", s.session)
 	mux.HandleFunc("GET /admin/config/meta", s.requireAuth(s.meta))
 	mux.HandleFunc("GET /admin/config", s.requireAuth(s.getConfig))
+	mux.HandleFunc("GET /admin/logs", s.requireAuth(s.logs))
+	mux.HandleFunc("GET /admin/logs/stream", s.requireAuth(s.streamLogs))
 	mux.HandleFunc("POST /admin/config/validate", s.requireSameOrigin(s.requireAuth(s.validateConfig)))
 	mux.HandleFunc("POST /admin/backend/test", s.requireSameOrigin(s.requireAuth(s.testBackend)))
 	mux.HandleFunc("PUT /admin/config", s.requireSameOrigin(s.requireAuth(s.putConfig)))
@@ -163,6 +179,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	}
 	key := s.setupFailureKey(r)
 	if s.authLimiter.Blocked(key) {
+		s.logAuthFailure("admin setup throttled", r, "too_many_attempts")
 		writeAdminError(w, http.StatusTooManyRequests, "auth.too_many_setup_attempts", "too many failed admin setup attempts", nil)
 		return
 	}
@@ -179,6 +196,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	if verifySetupCode(s.setupCode, req.SetupCode) != nil {
 		if req.SetupCode != "" {
 			s.authLimiter.RecordFailure(key)
+			s.logAuthFailure("admin setup failed", r, "invalid_setup_code")
 		}
 		writeAdminError(w, http.StatusUnauthorized, "auth.unauthorized", "unauthorized", nil)
 		return
@@ -221,6 +239,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	key := s.adminFailureKey(r)
 	if s.authLimiter.Blocked(key) {
+		s.logAuthFailure("admin login throttled", r, "too_many_attempts")
 		writeAdminError(w, http.StatusTooManyRequests, "auth.too_many_login_attempts", "too many failed admin authentication attempts", nil)
 		return
 	}
@@ -236,6 +255,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if verifyAdminCode(s.adminHash(), req.AccessCode) != nil {
 		if req.AccessCode != "" {
 			s.authLimiter.RecordFailure(key)
+			s.logAuthFailure("admin login failed", r, "invalid_access_code")
 		}
 		writeAdminError(w, http.StatusUnauthorized, "auth.unauthorized", "unauthorized", nil)
 		return
@@ -261,6 +281,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateAdminAccessCode(w http.ResponseWriter, r *http.Request) {
 	key := s.adminFailureKey(r)
 	if s.authLimiter.Blocked(key) {
+		s.logAuthFailure("admin access code update throttled", r, "too_many_attempts")
 		writeAdminError(w, http.StatusTooManyRequests, "auth.too_many_login_attempts", "too many failed admin authentication attempts", nil)
 		return
 	}
@@ -279,6 +300,7 @@ func (s *Server) updateAdminAccessCode(w http.ResponseWriter, r *http.Request) {
 	if verifyAdminCode(s.hash, req.CurrentAccessCode) != nil {
 		if req.CurrentAccessCode != "" {
 			s.authLimiter.RecordFailure(key)
+			s.logAuthFailure("admin access code update failed", r, "invalid_current_code")
 		}
 		writeAdminError(w, http.StatusUnauthorized, "auth.unauthorized", "unauthorized", nil)
 		return
@@ -294,6 +316,9 @@ func (s *Server) updateAdminAccessCode(w http.ResponseWriter, r *http.Request) {
 	}
 	s.hash = hash
 	s.authLimiter.Clear(key)
+	if s.logger != nil {
+		s.logger.Info("admin access code updated", "client", auth.ClientHost(r, s.trustXForwardedFor()))
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -321,6 +346,63 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, redactedConfig(*cfg))
+}
+
+func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
+	limit := parseLogLimit(r.URL.Query().Get("limit"), 300, 1000)
+	level := parseLogLevel(r.URL.Query().Get("level"))
+	entries := []logging.Entry{}
+	if s.logBuffer != nil {
+		entries = s.logBuffer.Snapshot(limit, level)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"logs": entries})
+}
+
+func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request) {
+	if s.logBuffer == nil {
+		http.NotFound(w, r)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeAdminError(w, http.StatusInternalServerError, "logs.stream_unsupported", "log streaming is not supported", nil)
+		return
+	}
+	level := parseLogLevel(r.URL.Query().Get("level"))
+	entries, unsubscribe := s.logBuffer.Subscribe()
+	defer unsubscribe()
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, ": connected\n\n")
+	flusher.Flush()
+
+	heartbeat := time.NewTicker(25 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-s.shutdown:
+			return
+		case <-r.Context().Done():
+			return
+		case <-heartbeat.C:
+			_, _ = io.WriteString(w, ": heartbeat\n\n")
+			flusher.Flush()
+		case entry, ok := <-entries:
+			if !ok {
+				return
+			}
+			if logEntryLevel(entry) < level {
+				continue
+			}
+			if err := writeLogSSE(w, entry); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 func (s *Server) validateConfig(w http.ResponseWriter, r *http.Request) {
@@ -386,6 +468,9 @@ func (s *Server) testBackend(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
 	if _, err := client.List(ctx, testCfg.Backends[0], "/", ""); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("admin backend test failed", "backend", testCfg.Backends[0].ID, "auth_type", testCfg.Backends[0].AuthType, "error_kind", backendTestErrorKind(err))
+		}
 		writeAdminError(w, http.StatusBadGateway, "backend.test_failed", "backend test failed", nil)
 		return
 	}
@@ -426,6 +511,9 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		s.onSaved(&validated)
 	} else {
 		s.ApplyConfig(&validated)
+	}
+	if s.logger != nil {
+		s.logger.Info("admin config saved", "path", s.configPath, "backends", len(validated.Backends), "subs", len(validated.Subs))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "config saved"})
 }
@@ -987,6 +1075,87 @@ func (s *Server) adminFailureKey(r *http.Request) string {
 
 func (s *Server) setupFailureKey(r *http.Request) string {
 	return "setup|" + auth.ClientHost(r, s.trustXForwardedFor())
+}
+
+func (s *Server) logAuthFailure(message string, r *http.Request, reason string) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.Warn(message, "client", auth.ClientHost(r, s.trustXForwardedFor()), "reason", reason)
+}
+
+func backendTestErrorKind(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "authorization"):
+		return "authorization"
+	case strings.Contains(msg, "permission denied"):
+		return "permission"
+	case strings.Contains(msg, "openlist request failed"):
+		return "request"
+	case strings.Contains(msg, "openlist"):
+		return "upstream"
+	default:
+		return "unknown"
+	}
+}
+
+func parseLogLimit(value string, fallback, max int) int {
+	limit, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || limit <= 0 {
+		return fallback
+	}
+	if limit > max {
+		return max
+	}
+	return limit
+}
+
+func parseLogLevel(value string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+func logEntryLevel(entry logging.Entry) slog.Level {
+	switch entry.Level {
+	case slog.LevelDebug.String():
+		return slog.LevelDebug
+	case slog.LevelWarn.String():
+		return slog.LevelWarn
+	case slog.LevelError.String():
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+func writeLogSSE(w io.Writer, entry logging.Entry) error {
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, "event: log\n"); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, "data: "); err != nil {
+		return err
+	}
+	if _, err := w.Write(data); err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, "\n\n")
+	return err
 }
 
 func adminURL(listen string) string {

@@ -232,7 +232,7 @@ func (s *Server) categoryForSub(service *mount.Service, w http.ResponseWriter, r
 	}
 	q := r.URL.Query()
 	result, err := service.CategoryForSub(r.Context(), subID, q.Get("tid"), q.Get("type"), q.Get("order"))
-	writeResult(w, result, err)
+	s.writeResult(w, result, err, "category", subID)
 }
 
 func (s *Server) detailForSub(service *mount.Service, w http.ResponseWriter, r *http.Request, subID string) {
@@ -246,7 +246,7 @@ func (s *Server) detailForSub(service *mount.Service, w http.ResponseWriter, r *
 		id = strings.Trim(id, "\"")
 	}
 	result, err := service.DetailForSub(r.Context(), subID, id)
-	writeResult(w, result, err)
+	s.writeResult(w, result, err, "detail", subID)
 }
 
 func (s *Server) searchForSub(service *mount.Service, w http.ResponseWriter, r *http.Request, subID string) {
@@ -258,7 +258,7 @@ func (s *Server) searchForSub(service *mount.Service, w http.ResponseWriter, r *
 		key = r.URL.Query().Get("wd")
 	}
 	result, err := service.SearchForSub(r.Context(), subID, key)
-	writeResult(w, result, err)
+	s.writeResult(w, result, err, "search", subID)
 }
 
 func (s *Server) playForSub(service *mount.Service, w http.ResponseWriter, r *http.Request, subID string) {
@@ -266,7 +266,7 @@ func (s *Server) playForSub(service *mount.Service, w http.ResponseWriter, r *ht
 		return
 	}
 	result, err := service.PlayForSub(r.Context(), subID, r.URL.Query().Get("id"))
-	writeResult(w, result, err)
+	s.writeResult(w, result, err, "play", subID)
 }
 
 func (s *Server) refreshForSub(service *mount.Service, w http.ResponseWriter, r *http.Request, subID string) {
@@ -288,7 +288,7 @@ func (s *Server) refreshForSub(service *mount.Service, w http.ResponseWriter, r 
 		id = body.ID
 	}
 	result, err := service.RefreshForSub(r.Context(), subID, id)
-	writeResult(w, result, err)
+	s.writeResult(w, result, err, "refresh", subID)
 }
 
 func (s *Server) liveForSub(service *mount.Service, w http.ResponseWriter, r *http.Request, subID, livePath string) {
@@ -385,6 +385,7 @@ func (s *Server) authSubID(service *mount.Service, w http.ResponseWriter, r *htt
 	}
 	key := s.authFailureKey(r, subID)
 	if s.authLimiter.Blocked(key) {
+		s.logSubAuthFailure("sub auth throttled", subID, r, "too_many_attempts")
 		writeJSON(w, http.StatusTooManyRequests, map[string]bool{"ok": false})
 		return
 	}
@@ -398,6 +399,7 @@ func (s *Server) authSubID(service *mount.Service, w http.ResponseWriter, r *htt
 	}
 	if code != "" {
 		s.authLimiter.RecordFailure(key)
+		s.logSubAuthFailure("sub auth failed", subID, r, "invalid_code")
 	}
 	writeJSON(w, http.StatusUnauthorized, map[string]bool{"ok": false})
 }
@@ -416,9 +418,11 @@ func (s *Server) authorize(service *mount.Service, w http.ResponseWriter, r *htt
 	}
 	key := s.authFailureKey(r, sub.ID)
 	if s.authLimiter.Blocked(key) {
+		s.logSubAuthFailure("sub api auth throttled", sub.ID, r, "too_many_attempts")
 		writeJSON(w, http.StatusTooManyRequests, catvod.Result{Error: "too many failed access code attempts"})
 		return false
 	}
+	s.logSubAuthFailure("sub api unauthorized", sub.ID, r, "missing_or_invalid_token")
 	writeJSON(w, http.StatusUnauthorized, catvod.Result{Error: "unauthorized"})
 	return false
 }
@@ -507,12 +511,49 @@ func accessHashFingerprint(hash string) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-func writeResult(w http.ResponseWriter, result catvod.Result, err error) {
+func (s *Server) writeResult(w http.ResponseWriter, result catvod.Result, err error, operation, subID string) {
 	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("tvbox api failed", "operation", operation, "sub", subID, "error_kind", tvboxErrorKind(err))
+		}
 		writeJSON(w, http.StatusBadRequest, catvod.Result{Error: err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) logSubAuthFailure(message, subID string, r *http.Request, reason string) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.Warn(message, "sub", subID, "client", auth.ClientHost(r, serviceFromRequest(r).Config().TrustXForwardedFor), "reason", reason)
+}
+
+func tvboxErrorKind(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "authorization"):
+		return "authorization"
+	case strings.Contains(msg, "permission denied"):
+		return "permission"
+	case strings.Contains(msg, "invalid play id"):
+		return "invalid_play_id"
+	case strings.Contains(msg, "unknown mount"):
+		return "unknown_mount"
+	case strings.Contains(msg, "unknown sub"):
+		return "unknown_sub"
+	case strings.Contains(msg, "refresh is not enabled"):
+		return "refresh_disabled"
+	case strings.Contains(msg, "openlist request failed"):
+		return "upstream_request"
+	case strings.Contains(msg, "openlist"):
+		return "upstream"
+	default:
+		return "request"
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

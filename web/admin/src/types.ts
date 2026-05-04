@@ -87,6 +87,17 @@ export interface BackendTestResult {
   message?: string;
 }
 
+export interface LogEntry {
+  time: string;
+  level: "DEBUG" | "INFO" | "WARN" | "ERROR" | string;
+  message: string;
+  attrs?: Record<string, unknown>;
+}
+
+export interface LogResponse {
+  logs: LogEntry[];
+}
+
 export class APIError extends Error {
   code?: string;
   params?: ErrorParams;

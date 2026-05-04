@@ -18,6 +18,7 @@ import (
 	"openlist-tvbox/internal/auth"
 	"openlist-tvbox/internal/config"
 	"openlist-tvbox/internal/gateway"
+	"openlist-tvbox/internal/logging"
 	"openlist-tvbox/internal/mount"
 	"openlist-tvbox/internal/openlist"
 )
@@ -35,7 +36,8 @@ func main() {
 	flag.BoolVar(&printConfigJSON, "print-config-json", false, "print the config as declarative JSON and exit")
 	flag.Parse()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logBuffer := logging.NewBuffer(logging.DefaultBufferSize)
+	logger := slog.New(logging.NewHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}), logBuffer))
 	if printConfigExample {
 		_, _ = os.Stdout.WriteString(starterConfigYAML)
 		return
@@ -77,6 +79,7 @@ func main() {
 	client := openlist.NewClient(http.DefaultClient, logger)
 	service := mount.NewService(cfg, client, logger)
 	gatewayHandler := gateway.NewServer(service, logger)
+	logger.Info("config loaded", "path", absConfigPath(configPath), "backends", len(cfg.Backends), "subs", len(cfg.Subs))
 	var adminHandler *admin.Server
 	applyConfig := func(cfg *config.Config) {
 		reloadedClient := openlist.NewClient(http.DefaultClient, logger)
@@ -92,6 +95,7 @@ func main() {
 			ConfigPath: configPath,
 			Listen:     listen,
 			Logger:     logger,
+			LogBuffer:  logBuffer,
 			OnSaved:    applyConfig,
 		})
 		if err != nil {
@@ -136,6 +140,9 @@ func main() {
 
 	logger.Info("shutdown signal received")
 	stopReload()
+	if adminHandler != nil {
+		adminHandler.Shutdown()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
@@ -219,11 +226,11 @@ func runConfigReloadWorker(ctx context.Context, configPath, absPath string, logg
 		}
 		cfg, err := config.Load(configPath)
 		if err != nil {
-			logger.Error("config reload failed; keeping current config", "error", err)
+			logger.Warn("config reload failed; keeping current config", "error", err)
 			continue
 		}
 		apply(cfg)
-		logger.Info("config reloaded", "path", absPath)
+		logger.Info("config reloaded", "path", absPath, "backends", len(cfg.Backends), "subs", len(cfg.Subs))
 	}
 }
 
@@ -288,11 +295,7 @@ func getenv(key, fallback string) string {
 }
 
 func logConfigLoadError(logger *slog.Logger, configPath string, err error) {
-	absPath, absErr := filepath.Abs(configPath)
-	if absErr != nil {
-		absPath = configPath
-	}
-	logger.Error("load config failed", "path", absPath, "error", err)
+	logger.Error("load config failed", "path", absConfigPath(configPath), "error", err)
 	if !errors.Is(err, os.ErrNotExist) {
 		return
 	}
@@ -301,6 +304,14 @@ func logConfigLoadError(logger *slog.Logger, configPath string, err error) {
 		logger.Info("config hint", "message", "found config candidate", "path", candidate)
 	}
 	logger.Info("config hint", "message", "run openlist-tvbox -print-config-example to print a starter YAML config")
+}
+
+func absConfigPath(configPath string) string {
+	absPath, absErr := filepath.Abs(configPath)
+	if absErr != nil {
+		return configPath
+	}
+	return absPath
 }
 
 func existingConfigCandidates() []string {

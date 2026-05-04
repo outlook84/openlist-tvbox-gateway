@@ -671,6 +671,112 @@ button.help-button:focus-visible {
   margin-left: auto;
 }
 
+.logs-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.logs-toolbar {
+  align-items: end;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.logs-title {
+  display: grid;
+  gap: 4px;
+}
+
+.logs-actions {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.logs-actions .field {
+  min-width: 150px;
+}
+
+.logs-check {
+  min-height: 38px;
+}
+
+.log-list {
+  background: #101820;
+  border: 1px solid #263746;
+  border-radius: 8px;
+  color: #d9e6f2;
+  display: grid;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  gap: 0;
+  max-height: min(66vh, 720px);
+  min-height: 360px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.log-list .empty-state {
+  align-self: center;
+  color: #8fa3b7;
+  justify-self: center;
+}
+
+.log-row {
+  align-items: start;
+  border-bottom: 1px solid rgb(255 255 255 / 7%);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 82px 54px minmax(160px, 0.7fr) minmax(220px, 1fr);
+  line-height: 1.45;
+  min-width: 760px;
+  padding: 7px 8px;
+}
+
+.log-row time {
+  color: #8fa3b7;
+}
+
+.log-level {
+  border-radius: 4px;
+  color: #101820;
+  font-size: 11px;
+  font-weight: 700;
+  justify-self: start;
+  line-height: 1;
+  padding: 4px 6px;
+}
+
+.log-message {
+  color: #f5f8fb;
+  overflow-wrap: anywhere;
+}
+
+.log-row code {
+  color: #b9c7d5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.level-debug .log-level {
+  background: #9fb1c1;
+}
+
+.level-info .log-level {
+  background: #79b8ff;
+}
+
+.level-warn .log-level {
+  background: #f4d35e;
+}
+
+.level-error .log-level {
+  background: #ff8a80;
+}
+
 @media (max-width: 920px) {
   .settings-grid,
   .sub-link,
@@ -692,6 +798,15 @@ button.help-button:focus-visible {
   .secret-row,
   .access-code-row {
     grid-template-columns: 1fr;
+  }
+
+  .logs-toolbar {
+    align-items: stretch;
+    display: grid;
+  }
+
+  .logs-actions {
+    justify-content: flex-start;
   }
 
   .tabs {
