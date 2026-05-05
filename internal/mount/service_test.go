@@ -177,6 +177,31 @@ func TestCategoryAddsPlayDirectoryVodForCurrentDirectoryMedia(t *testing.T) {
 	}
 }
 
+func TestHomeAndCategoryUseSubscriptionLanguage(t *testing.T) {
+	cfg := &config.Config{
+		Backends: []config.Backend{{ID: "b1", Server: "https://example.com"}},
+		Subs: []config.Subscription{{
+			TVBox:  config.TVBox{Language: "en"},
+			Mounts: []config.Mount{{ID: "m1", Name: "M1", Backend: "b1", Path: "/root", Refresh: true}},
+		}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(cfg, fakeClient{items: []openlist.Item{{Name: "movie.mkv", Type: 2}}}, nil)
+	home := svc.HomeForSub("default")
+	if home.Filters["m1"][0].Name != "Sort by" || home.Filters["m1"][0].Value[1].N != "Name" {
+		t.Fatalf("filters = %#v", home.Filters["m1"])
+	}
+	got, err := svc.CategoryForSub(context.Background(), "default", "m1", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.List) < 2 || got.List[0].VodName != "Refresh this folder" || got.List[0].VodRemarks != "Current folder" || got.List[1].VodName != "Play this folder" || got.List[1].VodRemarks != "1 video" {
+		t.Fatalf("list = %#v", got.List)
+	}
+}
+
 func TestCategoryShowsRefreshVodOnlyWhenMountEnablesRefresh(t *testing.T) {
 	cfg := &config.Config{
 		Backends: []config.Backend{{ID: "b1", Server: "https://example.com"}},
@@ -444,6 +469,45 @@ func TestDetailSortsSubtitlesForBoxFirstSubtitleFallback(t *testing.T) {
 		t.Fatalf("subs = %#v", names)
 	}
 	if play.Subt != "https://cdn.example.com/Movie.zh" || play.Subt != play.Subs[0].URL {
+		t.Fatalf("subt = %q, subs = %#v", play.Subt, play.Subs)
+	}
+}
+
+func TestDetailSortsSubtitlesBySubscriptionLanguage(t *testing.T) {
+	items := []openlist.Item{
+		{Name: "Movie.mkv", Type: 2},
+		{Name: "Movie.en.srt", Type: 0},
+		{Name: "Movie.zh.srt", Type: 0},
+		{Name: "Movie.srt", Type: 0},
+	}
+	cfg := &config.Config{
+		Backends: []config.Backend{{ID: "b1", Server: "https://example.com"}},
+		Subs: []config.Subscription{{
+			TVBox:  config.TVBox{Language: "en"},
+			Mounts: []config.Mount{{ID: "m1", Name: "M1", Backend: "b1", Path: "/root"}},
+		}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(cfg, fakeClient{items: items, urls: map[string]string{
+		"/root/Movie.mkv":    "https://cdn.example.com/Movie.mkv",
+		"/root/Movie.en.srt": "https://cdn.example.com/Movie.en",
+		"/root/Movie.zh.srt": "https://cdn.example.com/Movie.zh",
+		"/root/Movie.srt":    "https://cdn.example.com/Movie",
+	}}, nil)
+	got, err := svc.DetailForSub(context.Background(), "default", "m1/Movie.mkv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	play, err := svc.PlayForSub(context.Background(), "default", playIDFromURL(t, got.List[0].VodPlayURL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names := subNames(play.Subs); strings.Join(names, "|") != "Movie.en.srt|Movie.srt|Movie.zh.srt" {
+		t.Fatalf("subs = %#v", names)
+	}
+	if play.Subt != "https://cdn.example.com/Movie.en" || play.Subt != play.Subs[0].URL {
 		t.Fatalf("subt = %q, subs = %#v", play.Subt, play.Subs)
 	}
 }

@@ -20,6 +20,7 @@ trust_forwarded_headers: false
 # Defaults when omitted:
 #   site_key: openlist_tvbox
 #   site_name: OpenList
+#   language: en
 #   timeout: 15
 #   searchable: 1
 #   quick_search: 0
@@ -27,6 +28,7 @@ trust_forwarded_headers: false
 tvbox:
   site_key: openlist_tvbox
   site_name: OpenList
+  language: en
   timeout: 15
   searchable: 1
   quick_search: 0
@@ -95,12 +97,14 @@ subs:
     # site_key must contain only letters, digits, underscore, or dash.
     site_key: openlist_tvbox
     site_name: OpenList
-    # You can also override TVBox flags for this subscription with:
-    # tvbox:
-    #   timeout: 20
-    #   searchable: 1
-    #   quick_search: 0
-    #   changeable: 0
+    # You can also override TVBox language and flags for this subscription with:
+    tvbox:
+      # language accepts zh-CN or en.
+      language: en
+      # timeout: 20
+      # searchable: 1
+      # quick_search: 0
+      # changeable: 0
 
     # When set, lives[].url in the subscription points to a gateway proxy URL.
     # The gateway proxies only the live playlist file. EPG and media stream

@@ -35,6 +35,7 @@ type rawConfig struct {
 type TVBox struct {
 	SiteKey     string `json:"site_key" yaml:"site_key"`
 	SiteName    string `json:"site_name" yaml:"site_name"`
+	Language    string `json:"language" yaml:"language"`
 	Timeout     int    `json:"timeout" yaml:"timeout"`
 	Searchable  *int   `json:"searchable" yaml:"searchable"`
 	QuickSearch *int   `json:"quick_search" yaml:"quick_search"`
@@ -509,6 +510,7 @@ func normalizeTVBox(tv TVBox) TVBox {
 	if tv.SiteName == "" {
 		tv.SiteName = "OpenList"
 	}
+	tv.Language = normalizeLanguage(tv.Language)
 	if tv.Timeout <= 0 {
 		tv.Timeout = 15
 	}
@@ -521,6 +523,9 @@ func mergeTVBox(base, override TVBox) TVBox {
 	}
 	if override.SiteName == "" {
 		override.SiteName = base.SiteName
+	}
+	if override.Language == "" {
+		override.Language = base.Language
 	}
 	if override.Timeout <= 0 {
 		override.Timeout = base.Timeout
@@ -535,6 +540,17 @@ func mergeTVBox(base, override TVBox) TVBox {
 		override.Changeable = base.Changeable
 	}
 	return normalizeTVBox(override)
+}
+
+func normalizeLanguage(language string) string {
+	switch strings.TrimSpace(language) {
+	case "en", "en-US", "en-GB":
+		return "en"
+	case "", "zh", "zh-CN", "zh-Hans":
+		return "zh-CN"
+	default:
+		return "zh-CN"
+	}
 }
 
 func defaultSubSiteKey(baseKey, subID string) string {

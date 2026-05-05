@@ -10,6 +10,7 @@ import (
 )
 
 type resolved struct {
+	scope       *scope
 	mount       config.Mount
 	backend     config.Backend
 	relPath     string
@@ -39,7 +40,7 @@ func (s *Service) resolveScopedID(subID, id string) (resolved, error) {
 	if err != nil {
 		return resolved{}, err
 	}
-	return resolved{mount: m, backend: s.backends[m.Backend], relPath: cleanRel, backendPath: backendPath, password: s.password(m, backendPath)}, nil
+	return resolved{scope: sc, mount: m, backend: s.backends[m.Backend], relPath: cleanRel, backendPath: backendPath, password: s.password(m, backendPath)}, nil
 }
 
 func (s *Service) scope(subID string) (*scope, error) {

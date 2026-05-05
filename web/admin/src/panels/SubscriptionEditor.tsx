@@ -50,11 +50,19 @@ export function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
     }));
   }
 
+  function updateSubTVBox(index: number, patch: NonNullable<Subscription["tvbox"]>) {
+    const sub = config.subs[index];
+    updateSub(index, { tvbox: { ...(sub.tvbox || {}), ...patch } });
+  }
+
   function addSub() {
     const id = uniqueID("sub", config.subs.map((item) => item.id));
     const rowKey = subRows.add();
     setNewSubRows((current) => new Set(current).add(rowKey));
-    setConfig((current) => ({ ...current, subs: [...current.subs, { id, path: `/sub/${id}`, access_code_hash_action: "clear", mounts: [] }] }));
+    setConfig((current) => ({
+      ...current,
+      subs: [...current.subs, { id, path: `/sub/${id}`, access_code_hash_action: "clear", tvbox: { language: current.tvbox?.language || "zh-CN" }, mounts: [] }],
+    }));
   }
 
   function removeSub(index: number) {
@@ -176,6 +184,12 @@ export function SubscriptionEditor({ config, setConfig, t }: EditorProps) {
             </Field>
             <Field label={t("siteName")} help={t("helpSiteName")}>
               <input value={sub.site_name || ""} onChange={(event) => updateSub(subIndex, { site_name: event.target.value })} autoComplete="off" name={`subscription-site-name-${sub.id || subIndex}`} />
+            </Field>
+            <Field label={t("contentLanguage")} help={t("helpContentLanguage")}>
+              <select value={sub.tvbox?.language || config.tvbox?.language || "zh-CN"} onChange={(event) => updateSubTVBox(subIndex, { language: event.target.value })} name={`subscription-language-${sub.id || subIndex}`}>
+                <option value="zh-CN">{t("languageZhCN")}</option>
+                <option value="en">{t("languageEnglish")}</option>
+              </select>
             </Field>
           </div>
           <SecretHashField sub={sub} onChange={(patch) => updateSub(subIndex, patch)} t={t} />

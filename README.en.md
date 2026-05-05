@@ -1,5 +1,14 @@
 # openlist-tvbox-gateway
 
+![openlist-tvbox screenshot](screenshots/screenshot_en.png)
+
+<details>
+<summary>Admin UI screenshot</summary>
+
+![openlist-tvbox admin screenshot](screenshots/screenshot_admin_en.png)
+
+</details>
+
 `openlist-tvbox` is a read-only OpenList / AList gateway for TVBox / CatVodSpider.
 
 It converts server-side OpenList / AList content into TVBox-compatible categories, directory listings, search results, details, and playback data. TVBox clients talk only to this gateway and never receive your OpenList API key, username/password, or login token.

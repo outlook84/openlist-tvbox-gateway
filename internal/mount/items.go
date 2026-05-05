@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strconv"
 
+	"openlist-tvbox/internal/i18n"
 	"openlist-tvbox/internal/openlist"
 	"openlist-tvbox/internal/utils"
 )
@@ -52,9 +53,13 @@ func hasMedia(items []openlist.Item) bool {
 	return false
 }
 
-func formatMediaCount(count int) string {
-	if count == 1 {
-		return "1 个视频"
+func formatMediaCount(count int, lang string) string {
+	value := strconv.Itoa(count)
+	if i18n.NormalizeLanguage(lang) == i18n.English {
+		if count == 1 {
+			return value + " video"
+		}
+		return value + " videos"
 	}
-	return strconv.Itoa(count) + " 个视频"
+	return value + " 个视频"
 }

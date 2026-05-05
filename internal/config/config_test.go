@@ -347,6 +347,23 @@ func TestValidateEditableAllowsSubAdminPath(t *testing.T) {
 	}
 }
 
+func TestSubscriptionTVBoxLanguageFallsBackToDefault(t *testing.T) {
+	cfg := &Config{
+		TVBox:    TVBox{Language: "en"},
+		Backends: []Backend{{ID: "b1", Server: "https://openlist.example.com"}},
+		Subs: []Subscription{{
+			ID:     "default",
+			Mounts: []Mount{{ID: "m1", Backend: "b1", Path: "/"}},
+		}},
+	}
+	if err := cfg.ValidateEditable(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Subs[0].TVBox.Language != "en" {
+		t.Fatalf("effective sub tvbox language = %q, want en", cfg.Subs[0].TVBox.Language)
+	}
+}
+
 func TestValidateRequiresSubs(t *testing.T) {
 	cfg := Config{
 		Backends: []Backend{{ID: "b1", Server: "https://example.com"}},

@@ -48,6 +48,7 @@ type Site struct {
 type siteExt struct {
 	Gateway string `json:"gateway"`
 	SKey    string `json:"skey"`
+	Lang    string `json:"lang"`
 }
 
 func BuildForSub(cfg *config.Config, sub config.Subscription, r *http.Request) Config {
@@ -58,6 +59,7 @@ func BuildForSub(cfg *config.Config, sub config.Subscription, r *http.Request) C
 	ext, _ := json.Marshal(siteExt{
 		Gateway: gateway,
 		SKey:    storageKey,
+		Lang:    sub.TVBox.Language,
 	})
 	out := Config{
 		Sites: []Site{{

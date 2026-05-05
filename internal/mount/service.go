@@ -11,6 +11,7 @@ import (
 
 	"openlist-tvbox/internal/catvod"
 	"openlist-tvbox/internal/config"
+	"openlist-tvbox/internal/i18n"
 	"openlist-tvbox/internal/openlist"
 	"openlist-tvbox/internal/utils"
 )
@@ -42,6 +43,7 @@ type Service struct {
 
 type scope struct {
 	id     string
+	lang   string
 	tvbox  config.TVBox
 	mounts []config.Mount
 	byID   map[string]config.Mount
@@ -64,7 +66,7 @@ func NewService(cfg *config.Config, client OpenListClient, logger *slog.Logger) 
 		s.backends[b.ID] = b
 	}
 	for _, sub := range cfg.Subs {
-		sc := &scope{id: sub.ID, tvbox: sub.TVBox, mounts: sub.Mounts, byID: map[string]config.Mount{}}
+		sc := &scope{id: sub.ID, lang: sub.TVBox.Language, tvbox: sub.TVBox, mounts: sub.Mounts, byID: map[string]config.Mount{}}
 		for _, m := range sub.Mounts {
 			sc.byID[m.ID] = m
 		}
@@ -89,7 +91,7 @@ func (s *Service) HomeForSub(subID string) catvod.Result {
 			continue
 		}
 		classes = append(classes, catvod.Class{TypeID: m.ID, TypeName: m.Name, TypeFlag: "1"})
-		filters[m.ID] = standardFilters()
+		filters[m.ID] = standardFilters(sc.lang)
 	}
 	return catvod.Result{Class: classes, Filters: filters}
 }
@@ -108,12 +110,12 @@ func (s *Service) CategoryForSub(ctx context.Context, subID, tid, sortType, orde
 	sortItems(sortType, order, files)
 	vods := make([]catvod.Vod, 0, len(folders)+len(files))
 	if ref.mount.Refresh {
-		vods = append(vods, refreshDirectoryVod(ref.mount, ref.relPath))
+		vods = append(vods, refreshDirectoryVod(ref.mount, ref.relPath, ref.scope.lang))
 	}
 	if hasMedia(files) {
 		// Synthetic action items are shown before real OpenList entries so
 		// remote-control users can play the current directory immediately.
-		vods = append(vods, playDirectoryVod(ref.mount, ref.relPath, len(orderedMediaItems(files, ""))))
+		vods = append(vods, playDirectoryVod(ref.mount, ref.relPath, len(orderedMediaItems(files, "")), ref.scope.lang))
 	}
 	for _, item := range append(folders, files...) {
 		if utils.Ignore(item.Name, item.Type) {
@@ -135,7 +137,7 @@ func (s *Service) RefreshForSub(ctx context.Context, subID, id string) (catvod.R
 	if _, err := s.client.RefreshList(ctx, ref.backend, ref.backendPath, ref.password); err != nil {
 		return catvod.Result{}, err
 	}
-	return catvod.Result{List: []catvod.Vod{{VodID: id, VodName: "刷新完成", VodPic: listPic, VodRemarks: "返回目录查看最新内容", VodTag: "folder", TypeFlag: "folder"}}}, nil
+	return catvod.Result{List: []catvod.Vod{{VodID: id, VodName: i18n.T(ref.scope.lang, i18n.ActionRefreshDone), VodPic: listPic, VodRemarks: i18n.T(ref.scope.lang, i18n.RemarkRefreshDone), VodTag: "folder", TypeFlag: "folder"}}}, nil
 }
 
 func (s *Service) DetailForSub(ctx context.Context, subID, id string) (catvod.Result, error) {
@@ -150,7 +152,7 @@ func (s *Service) DetailForSub(ctx context.Context, subID, id string) (catvod.Re
 	playURLs := []string{}
 	mediaItems := orderedMediaItems(items, selectedName)
 	for _, item := range mediaItems {
-		subs := s.findSubs(ref.mount, mediaParentRel, items, item.Name)
+		subs := s.findSubs(ref.mount, mediaParentRel, items, item.Name, ref.scope.lang)
 		mediaID := encodePlayToken(playToken{ID: ref.mount.ID + "/" + path.Join(mediaParentRel, item.Name), Subs: subs})
 		playURLs = append(playURLs, playItemName(item.Name)+"$"+mediaID)
 	}

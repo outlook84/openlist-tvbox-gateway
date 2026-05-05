@@ -40,8 +40,31 @@ func TestBuildSubscriptionDoesNotLeakBackendSecrets(t *testing.T) {
 	if ext["gateway"] != "http://gateway.example.com/s/default" {
 		t.Fatalf("site ext gateway = %q", ext["gateway"])
 	}
+	if ext["lang"] != "zh-CN" {
+		t.Fatalf("site ext lang = %q", ext["lang"])
+	}
 	if !strings.HasPrefix(ext["skey"], "openlist_tvbox_default_u") {
 		t.Fatalf("site ext skey = %q", ext["skey"])
+	}
+}
+
+func TestBuildForSubEmitsConfiguredLanguage(t *testing.T) {
+	cfg := &config.Config{
+		PublicBaseURL: "http://gateway.example.com",
+		Backends:      []config.Backend{{ID: "b1", Server: "https://openlist.example.com"}},
+		TVBox:         config.TVBox{Language: "zh-CN"},
+		Subs:          []config.Subscription{{TVBox: config.TVBox{Language: "en"}, Mounts: []config.Mount{{ID: "m", Backend: "b1", Path: "/Movies"}}}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	got := BuildForSub(cfg, cfg.Subs[0], httptest.NewRequest("GET", "http://ignored/sub", nil))
+	var ext map[string]string
+	if err := json.Unmarshal([]byte(got.Sites[0].Ext), &ext); err != nil {
+		t.Fatal(err)
+	}
+	if ext["lang"] != "en" {
+		t.Fatalf("site ext lang = %q", ext["lang"])
 	}
 }
 

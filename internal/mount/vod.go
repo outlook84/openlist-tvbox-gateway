@@ -6,6 +6,7 @@ import (
 
 	"openlist-tvbox/internal/catvod"
 	"openlist-tvbox/internal/config"
+	"openlist-tvbox/internal/i18n"
 	"openlist-tvbox/internal/openlist"
 	"openlist-tvbox/internal/utils"
 )
@@ -58,21 +59,21 @@ func iconForItem(name string, itemType int) string {
 	return filePic
 }
 
-func playDirectoryVod(m config.Mount, relPath string, count int) catvod.Vod {
+func playDirectoryVod(m config.Mount, relPath string, count int, lang string) catvod.Vod {
 	id := m.ID
 	if relPath != "" {
 		id += "/" + relPath
 	}
-	remark := displayDirectoryRemark(relPath, count)
+	remark := displayDirectoryRemark(relPath, count, lang)
 	if remark == "" {
-		remark = "播放当前目录"
+		remark = i18n.T(lang, i18n.RemarkPlayDirectory)
 	}
-	return catvod.Vod{VodID: id, VodName: "播放此目录", VodPic: listPic, VodRemarks: remark, VodTag: "file"}
+	return catvod.Vod{VodID: id, VodName: i18n.T(lang, i18n.ActionPlayDirectory), VodPic: listPic, VodRemarks: remark, VodTag: "file"}
 }
 
-func displayDirectoryRemark(relPath string, count int) string {
+func displayDirectoryRemark(relPath string, count int, lang string) string {
 	if count > 0 {
-		return formatMediaCount(count)
+		return formatMediaCount(count, lang)
 	}
 	return ""
 }
@@ -87,18 +88,18 @@ func middleEllipsis(value string, maxRunes int) string {
 	return string(runes[:head]) + "..." + string(runes[len(runes)-tail:])
 }
 
-func refreshDirectoryVod(m config.Mount, relPath string) catvod.Vod {
+func refreshDirectoryVod(m config.Mount, relPath, lang string) catvod.Vod {
 	id := "__refresh__/" + m.ID
 	if relPath != "" {
 		id += "/" + relPath
 	}
-	return catvod.Vod{VodID: id, VodName: "刷新此目录", VodPic: refreshPic, VodRemarks: displayCurrentDirName(relPath), VodTag: "folder", TypeFlag: "folder"}
+	return catvod.Vod{VodID: id, VodName: i18n.T(lang, i18n.ActionRefreshDirectory), VodPic: refreshPic, VodRemarks: displayCurrentDirName(relPath, lang), VodTag: "folder", TypeFlag: "folder"}
 }
 
-func displayCurrentDirName(relPath string) string {
+func displayCurrentDirName(relPath, lang string) string {
 	relPath = strings.Trim(relPath, "/")
 	if relPath == "" {
-		return "当前目录"
+		return i18n.T(lang, i18n.RemarkCurrentDir)
 	}
 	return middleEllipsis(path.Base(relPath), maxNoteNameRunes)
 }

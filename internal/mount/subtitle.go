@@ -10,7 +10,7 @@ import (
 	"openlist-tvbox/internal/utils"
 )
 
-func (s *Service) findSubs(m config.Mount, parentRel string, items []openlist.Item, mediaName string) []playSubToken {
+func (s *Service) findSubs(m config.Mount, parentRel string, items []openlist.Item, mediaName, lang string) []playSubToken {
 	subs := []playSubToken{}
 	mediaBase := subtitleMatchBase(mediaName)
 	for _, item := range items {
@@ -24,13 +24,13 @@ func (s *Service) findSubs(m config.Mount, parentRel string, items []openlist.It
 		subs = append(subs, playSubToken{Name: item.Name, Ext: utils.Ext(item.Name), ID: subID})
 	}
 	sort.SliceStable(subs, func(i, j int) bool {
-		return subtitleLess(mediaBase, subs[i], subs[j])
+		return subtitleLess(mediaBase, subs[i], subs[j], lang)
 	})
 	return subs
 }
 
-func subtitleLess(mediaBase string, a, b playSubToken) bool {
-	aRank, bRank := subtitleRank(mediaBase, a.Name), subtitleRank(mediaBase, b.Name)
+func subtitleLess(mediaBase string, a, b playSubToken, lang string) bool {
+	aRank, bRank := subtitleRank(mediaBase, a.Name, lang), subtitleRank(mediaBase, b.Name, lang)
 	if aRank != bRank {
 		return aRank < bRank
 	}
@@ -45,8 +45,26 @@ func subtitleLess(mediaBase string, a, b playSubToken) bool {
 	return mediaNameLess(a.Name, b.Name)
 }
 
-func subtitleRank(mediaBase, name string) int {
+func subtitleRank(mediaBase, name, lang string) int {
 	tags := subtitleTags(mediaBase, name)
+	if lang == "en" {
+		switch {
+		case hasAnyTag(tags, "en", "eng", "english"):
+			return 0
+		case hasAnyTag(tags, "bilingual", "dual", "双语", "中英"):
+			return 1
+		case strings.EqualFold(subtitleMatchBase(name), mediaBase):
+			return 2
+		case hasAnyTag(tags, "zh-cn", "chs", "sc", "simplified", "简", "简体", "简中", "中文", "中字"):
+			return 3
+		case hasAnyTag(tags, "zh", "chi", "zho", "cn"):
+			return 4
+		case hasAnyTag(tags, "zh-tw", "cht", "tc", "traditional", "繁", "繁体"):
+			return 5
+		default:
+			return 6
+		}
+	}
 	switch {
 	case hasAnyTag(tags, "zh-cn", "chs", "sc", "simplified", "简", "简体", "简中", "中文", "中字"):
 		return 0

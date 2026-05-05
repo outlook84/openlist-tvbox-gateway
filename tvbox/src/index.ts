@@ -15,6 +15,7 @@ let gateway = "";
 let siteBase = "";
 let storageRule = "openlist_tvbox";
 let storageScope = "openlist_tvbox";
+let language = "zh-CN";
 const sessionTokens: Record<string, StoredToken> = {};
 
 const AUTH_ID = "__openlist_auth__";
@@ -41,6 +42,48 @@ type StoredCode = {
   code: string;
 };
 
+type MessageKey =
+  | "auth.title"
+  | "auth.prompt"
+  | "auth.empty"
+  | "auth.backspace"
+  | "auth.clear"
+  | "auth.submit"
+  | "auth.verify"
+  | "auth.enterFirst"
+  | "auth.invalid"
+  | "auth.success"
+  | "auth.restart";
+
+const messages: Record<string, Record<MessageKey, string>> = {
+  "zh-CN": {
+    "auth.title": "访问码",
+    "auth.prompt": "请输入访问码",
+    "auth.empty": "未输入",
+    "auth.backspace": "退格",
+    "auth.clear": "清空",
+    "auth.submit": "确认",
+    "auth.verify": "验证访问码",
+    "auth.enterFirst": "请先输入",
+    "auth.invalid": "访问码错误",
+    "auth.success": "验证成功",
+    "auth.restart": "请重启 App 后使用",
+  },
+  en: {
+    "auth.title": "Access code",
+    "auth.prompt": "Enter access code",
+    "auth.empty": "Empty",
+    "auth.backspace": "Backspace",
+    "auth.clear": "Clear",
+    "auth.submit": "Submit",
+    "auth.verify": "Verify access code",
+    "auth.enterFirst": "Enter a code first",
+    "auth.invalid": "Invalid access code",
+    "auth.success": "Verified",
+    "auth.restart": "Restart the app to continue",
+  },
+};
+
 function normalizeBaseURL(value: string): string {
   return value.replace(/\/+$/, "");
 }
@@ -52,6 +95,15 @@ function siteBaseFromGateway(value: string): string {
 function storageScopeFromGateway(value: string): string {
   const scoped = value.replace(/^https?:\/\//, "").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
   return scoped ? `openlist_tvbox_${scoped}` : "openlist_tvbox";
+}
+
+function normalizeLanguage(value: string): string {
+  if (value === "en" || value === "en-US" || value === "en-GB") return "en";
+  return "zh-CN";
+}
+
+function t(key: MessageKey): string {
+  return messages[language][key] || messages["zh-CN"][key];
 }
 
 function gatewayFingerprint(): string {
@@ -281,6 +333,10 @@ function resolveStorageRuleInput(value: string | Json): string {
   return resolveStringInput(value, ["skey"], false);
 }
 
+function resolveLanguageInput(value: string | Json): string {
+  return resolveStringInput(value, ["lang", "language"], false);
+}
+
 function isUnauthorized(raw: string): boolean {
   return parseResult(raw).error === "unauthorized";
 }
@@ -297,9 +353,9 @@ function folderVod(id: string, name: string, remarks = ""): Json {
 }
 
 function authResult(input = "", message = ""): string {
-  const masked = input ? "*".repeat(input.length) : "未输入";
+  const masked = input ? "*".repeat(input.length) : t("auth.empty");
   const list: Json[] = [
-    folderVod(`${AUTH_ID}/noop/${input}`, `访问码：${masked}`, message || "请输入访问码"),
+    folderVod(`${AUTH_ID}/noop/${input}`, `${t("auth.title")}：${masked}`, message || t("auth.prompt")),
     folderVod(`${AUTH_ID}/0/${input}`, "0"),
     folderVod(`${AUTH_ID}/1/${input}`, "1"),
     folderVod(`${AUTH_ID}/2/${input}`, "2"),
@@ -310,12 +366,12 @@ function authResult(input = "", message = ""): string {
     folderVod(`${AUTH_ID}/7/${input}`, "7"),
     folderVod(`${AUTH_ID}/8/${input}`, "8"),
     folderVod(`${AUTH_ID}/9/${input}`, "9"),
-    folderVod(`${AUTH_ID}/backspace/${input}`, "退格"),
-    folderVod(`${AUTH_ID}/clear/${input}`, "清空"),
-    folderVod(`${AUTH_ID}/submit/${input}`, "确认", input ? "验证访问码" : "请先输入"),
+    folderVod(`${AUTH_ID}/backspace/${input}`, t("auth.backspace")),
+    folderVod(`${AUTH_ID}/clear/${input}`, t("auth.clear")),
+    folderVod(`${AUTH_ID}/submit/${input}`, t("auth.submit"), input ? t("auth.verify") : t("auth.enterFirst")),
   ];
   return JSON.stringify({
-    class: [{ type_id: AUTH_ID, type_name: "访问码", type_flag: "1" }],
+    class: [{ type_id: AUTH_ID, type_name: t("auth.title"), type_flag: "1" }],
     list,
     page: 1,
     pagecount: 1,
@@ -333,14 +389,14 @@ function authCategory(tid: string): string {
   if (action === "clear") return authResult("");
   if (action === "noop") return authResult(input);
   if (action !== "submit") return authResult(input);
-  if (!input) return authResult("", "请先输入访问码");
+  if (!input) return authResult("", t("auth.prompt"));
   if (authenticateWithCode(input)) {
     setStoredCode(input);
     return authSuccessResult();
   }
   clearSessionToken();
   clearStoredCode();
-  return authResult("", "访问码错误");
+  return authResult("", t("auth.invalid"));
 }
 
 function refreshCategory(tid: string): string {
@@ -353,7 +409,7 @@ function refreshCategory(tid: string): string {
 }
 
 function authSuccessResult(): string {
-  const list = [folderVod(`${AUTH_ID}/noop/`, "验证成功", "请重启 App 后使用")];
+  const list = [folderVod(`${AUTH_ID}/noop/`, t("auth.success"), t("auth.restart"))];
   return JSON.stringify({
     list,
     page: 1,
@@ -410,6 +466,7 @@ const spider = {
     siteBase = siteBaseFromGateway(gateway);
     storageScope = resolveStorageRuleInput(ext) || storageScopeFromGateway(gateway);
     storageRule = storageScope;
+    language = normalizeLanguage(resolveLanguageInput(ext));
     clearSessionToken();
   },
 

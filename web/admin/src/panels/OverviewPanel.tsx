@@ -60,6 +60,12 @@ export function OverviewPanel({ config, setConfig, t }: EditorProps) {
           <Field label={t("defaultSiteName")} help={t("helpDefaultSiteName")}>
             <input value={tvbox.site_name || ""} onChange={(event) => updateTVBox(setConfig, { site_name: event.target.value })} placeholder="OpenList" autoComplete="off" name="default-site-name" />
           </Field>
+          <Field label={t("defaultContentLanguage")} help={t("helpDefaultContentLanguage")}>
+            <select value={tvbox.language || "zh-CN"} onChange={(event) => updateTVBox(setConfig, { language: event.target.value })} name="default-content-language">
+              <option value="zh-CN">{t("languageZhCN")}</option>
+              <option value="en">{t("languageEnglish")}</option>
+            </select>
+          </Field>
           <Field label={t("timeoutSeconds")} help={t("helpTimeoutSeconds")}>
             <input
               type="number"

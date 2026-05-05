@@ -3,6 +3,7 @@ export type SecretAction = "keep" | "replace" | "clear";
 export interface TVBoxSettings {
   site_key?: string;
   site_name?: string;
+  language?: string;
   timeout?: number;
   searchable?: number;
   quick_search?: number;

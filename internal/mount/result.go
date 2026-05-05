@@ -4,12 +4,13 @@ import (
 	"strings"
 
 	"openlist-tvbox/internal/catvod"
+	"openlist-tvbox/internal/i18n"
 )
 
-func standardFilters() []catvod.Filter {
+func standardFilters(lang string) []catvod.Filter {
 	return []catvod.Filter{
-		{Key: "type", Name: "排序类型", Value: []catvod.FilterValue{{N: "默认", V: ""}, {N: "名称", V: "name"}, {N: "大小", V: "size"}, {N: "修改时间", V: "date"}}},
-		{Key: "order", Name: "排序方式", Value: []catvod.FilterValue{{N: "默认", V: ""}, {N: "升序", V: "asc"}, {N: "降序", V: "desc"}}},
+		{Key: "type", Name: i18n.T(lang, i18n.FilterSortType), Value: []catvod.FilterValue{{N: i18n.T(lang, i18n.FilterDefault), V: ""}, {N: i18n.T(lang, i18n.FilterName), V: "name"}, {N: i18n.T(lang, i18n.FilterSize), V: "size"}, {N: i18n.T(lang, i18n.FilterDate), V: "date"}}},
+		{Key: "order", Name: i18n.T(lang, i18n.FilterSortOrder), Value: []catvod.FilterValue{{N: i18n.T(lang, i18n.FilterDefault), V: ""}, {N: i18n.T(lang, i18n.FilterAscending), V: "asc"}, {N: i18n.T(lang, i18n.FilterDescending), V: "desc"}}},
 	}
 }
 

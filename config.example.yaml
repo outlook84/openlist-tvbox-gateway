@@ -19,6 +19,7 @@ trust_forwarded_headers: false
 # 省略时的默认值：
 #   site_key: openlist_tvbox
 #   site_name: OpenList
+#   language: zh-CN
 #   timeout: 15
 #   searchable: 1
 #   quick_search: 0
@@ -26,6 +27,7 @@ trust_forwarded_headers: false
 tvbox:
   site_key: openlist_tvbox
   site_name: OpenList
+  language: zh-CN
   timeout: 15
   searchable: 1
   quick_search: 0
@@ -93,12 +95,14 @@ subs:
     # site_key 只能包含字母、数字、下划线或短横线。
     site_key: openlist_tvbox
     site_name: OpenList
-    # 也可以为此订阅覆盖 TVBox 标志：
-    # tvbox:
-    #   timeout: 20
-    #   searchable: 1
-    #   quick_search: 0
-    #   changeable: 0
+    # 也可以为此订阅覆盖 TVBox 语言和标志：
+    tvbox:
+      # language 可选值：zh-CN、en。
+      language: zh-CN
+      # timeout: 20
+      # searchable: 1
+      # quick_search: 0
+      # changeable: 0
 
     # 可选直播源。配置后，订阅中的 lives[].url 会输出为网关代理地址。
     # 网关只代理直播列表文件本身；EPG 和列表里的真实视频流地址按配置直接下发。

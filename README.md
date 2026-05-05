@@ -1,11 +1,11 @@
 # openlist-tvbox-gateway
 
-![openlist-tvbox screenshot](screenshot.png)
+![openlist-tvbox screenshot](screenshots/screenshot.png)
 
 <details>
 <summary>管理界面截图</summary>
 
-![openlist-tvbox admin screenshot](screenshot_admin.png)
+![openlist-tvbox admin screenshot](screenshots/screenshot_admin.png)
 
 </details>
 

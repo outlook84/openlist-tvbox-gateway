@@ -123,4 +123,19 @@ describe("tvbox spider", () => {
     expect(result.class[0].type_id).toBe("__openlist_auth__");
     expect(result.list.map((item) => item.vod_name)).toContain("确认");
   });
+
+  it("uses the configured language for the access-code UI", async () => {
+    const spider = await loadSpider();
+    stubReq(() => ({ content: JSON.stringify({ error: "unauthorized" }) }));
+
+    spider.init({ gateway: "https://gateway.test", lang: "en" });
+    const result = JSON.parse(spider.detail("mount/video.mp4")) as {
+      class: Array<{ type_name: string }>;
+      list: Array<{ vod_name: string; vod_remarks?: string }>;
+    };
+
+    expect(result.class[0].type_name).toBe("Access code");
+    expect(result.list.map((item) => item.vod_name)).toContain("Submit");
+    expect(result.list[0].vod_remarks).toBe("Enter access code");
+  });
 });

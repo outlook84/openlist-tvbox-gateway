@@ -4,6 +4,7 @@
   "tvbox": {
     "site_key": "openlist_tvbox",
     "site_name": "OpenList",
+    "language": "en",
     "timeout": 15,
     "searchable": 1,
     "quick_search": 0,
@@ -23,6 +24,9 @@
       "path": "/sub",
       "site_key": "openlist_tvbox",
       "site_name": "OpenList",
+      "tvbox": {
+        "language": "en"
+      },
       "lives": [
         {
           "name": "Live",

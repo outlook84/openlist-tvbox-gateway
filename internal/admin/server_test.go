@@ -976,6 +976,131 @@ func TestPutConfigAcceptsRedactedGetResponse(t *testing.T) {
 	}
 }
 
+func TestPutConfigRedactedResponsePreservesNestedSubTVBoxLanguage(t *testing.T) {
+	path := writeAdminConfig(t, `{
+  "tvbox": {"language":"zh-CN"},
+  "backends": [
+    {"id":"b1","server":"https://openlist.example.com","auth_type":"api_key","api_key":"old-secret"}
+  ],
+  "subs": [
+    {"id":"default","tvbox":{"language":"en"},"mounts":[{"id":"media","backend":"b1","path":"/Media"}]}
+  ]
+}`)
+	t.Setenv(envAdminCode, "123456789012")
+	var saved *config.Config
+	server, err := NewServer(Options{ConfigPath: path, OnSaved: func(cfg *config.Config) { saved = cfg }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+	getReq := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config", nil)
+	getReq.AddCookie(cookie)
+	getRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status = %d body = %s", getRec.Code, getRec.Body.String())
+	}
+
+	var editable map[string]any
+	if err := json.Unmarshal(getRec.Body.Bytes(), &editable); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(editable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putReq := httptest.NewRequest(http.MethodPut, "http://example.com/admin/config", bytes.NewReader(body))
+	putReq.AddCookie(cookie)
+	putRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(putRec, putReq)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("put status = %d body = %s", putRec.Code, putRec.Body.String())
+	}
+	if saved == nil {
+		t.Fatal("OnSaved was not called")
+	}
+	if saved.Subs[0].TVBox.Language != "en" {
+		t.Fatalf("effective sub language = %q, want en", saved.Subs[0].TVBox.Language)
+	}
+	reloaded, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Subs[0].TVBox.Language != "en" {
+		t.Fatalf("reloaded sub language = %q, want en", reloaded.Subs[0].TVBox.Language)
+	}
+}
+
+func TestPutConfigRedactedResponseMaterializesEmptySubTVBoxLanguage(t *testing.T) {
+	path := writeAdminConfig(t, `{
+  "tvbox": {"language":"en"},
+  "backends": [
+    {"id":"b1","server":"https://openlist.example.com","auth_type":"api_key","api_key":"old-secret"}
+  ],
+  "subs": [
+    {"id":"default","mounts":[{"id":"media","backend":"b1","path":"/Media"}]}
+  ]
+}`)
+	t.Setenv(envAdminCode, "123456789012")
+	var saved *config.Config
+	server, err := NewServer(Options{ConfigPath: path, OnSaved: func(cfg *config.Config) { saved = cfg }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+	getReq := httptest.NewRequest(http.MethodGet, "http://example.com/admin/config", nil)
+	getReq.AddCookie(cookie)
+	getRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status = %d body = %s", getRec.Code, getRec.Body.String())
+	}
+
+	var editable map[string]any
+	if err := json.Unmarshal(getRec.Body.Bytes(), &editable); err != nil {
+		t.Fatal(err)
+	}
+	subs, ok := editable["subs"].([]any)
+	if !ok || len(subs) != 1 {
+		t.Fatalf("subs = %#v", editable["subs"])
+	}
+	sub, ok := subs[0].(map[string]any)
+	if !ok {
+		t.Fatalf("sub = %#v", subs[0])
+	}
+	tvbox, ok := sub["tvbox"].(map[string]any)
+	if !ok {
+		t.Fatalf("sub tvbox = %#v", sub["tvbox"])
+	}
+	if tvbox["language"] != "en" {
+		t.Fatalf("get sub tvbox language = %#v, want en", tvbox["language"])
+	}
+	body, err := json.Marshal(editable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putReq := httptest.NewRequest(http.MethodPut, "http://example.com/admin/config", bytes.NewReader(body))
+	putReq.AddCookie(cookie)
+	putRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(putRec, putReq)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("put status = %d body = %s", putRec.Code, putRec.Body.String())
+	}
+	if saved == nil {
+		t.Fatal("OnSaved was not called")
+	}
+	if saved.Subs[0].TVBox.Language != "en" {
+		t.Fatalf("effective sub language = %q, want en", saved.Subs[0].TVBox.Language)
+	}
+	reloaded, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Subs[0].TVBox.Language != "en" {
+		t.Fatalf("reloaded sub language = %q, want en", reloaded.Subs[0].TVBox.Language)
+	}
+}
+
 func TestValidateConfigAcceptsRedactedGetResponse(t *testing.T) {
 	path := writeAdminConfig(t, testJSONConfig("old-secret"))
 	t.Setenv(envAdminCode, "123456789012")
