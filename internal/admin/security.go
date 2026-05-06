@@ -130,35 +130,6 @@ func (s *Server) requestIsHTTPS(r *http.Request) bool {
 	return proxyheaders.IsHTTPS(r, s.trustForwardedHeaders())
 }
 
-func (s *Server) sameOrigin(r *http.Request) bool {
-	origin := strings.TrimSpace(r.Header.Get("Origin"))
-	if origin != "" {
-		return s.originMatchesRequest(r, origin)
-	}
-	referer := strings.TrimSpace(r.Header.Get("Referer"))
-	if referer != "" {
-		return s.originMatchesRequest(r, referer)
-	}
-	return true
-}
-
-func (s *Server) originMatchesRequest(r *http.Request, raw string) bool {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return false
-	}
-	for _, baseURL := range s.adminOriginBaseURLs(r) {
-		want, err := url.Parse(baseURL)
-		if err != nil || want.Scheme == "" || want.Host == "" {
-			continue
-		}
-		if strings.EqualFold(u.Scheme, want.Scheme) && strings.EqualFold(u.Host, want.Host) {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *Server) adminBaseURL(r *http.Request) string {
 	baseURLs := s.adminOriginBaseURLs(r)
 	if len(baseURLs) > 0 {

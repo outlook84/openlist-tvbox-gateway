@@ -446,7 +446,65 @@ func TestAdminWriteRejectsCrossOrigin(t *testing.T) {
 	}
 }
 
-func TestAdminWriteAllowsSameOriginReferer(t *testing.T) {
+func TestAdminWriteAllowsSameOriginOrigin(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/config/validate", strings.NewReader(`{"backends":[{"id":"b1","server":"https://openlist.example.com"}],"subs":[]}`))
+	req.Header.Set("Origin", "http://example.com")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminWriteRejectsCrossSchemeOriginFallback(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfigWithTrustForwardedHeaders("old-secret", true))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/config/validate", strings.NewReader(`{"backends":[],"subs":[]}`))
+	req.Header.Set("Origin", "http://example.com")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminWriteRejectsCrossOriginRefererFallback(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/config/validate", strings.NewReader(`{"backends":[],"subs":[]}`))
+	req.Header.Set("Referer", "http://evil.example.com/admin/")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminWriteAllowsSameOriginRefererFallback(t *testing.T) {
 	path := writeAdminConfig(t, testJSONConfig("old-secret"))
 	t.Setenv(envAdminCode, "123456789012")
 	server, err := NewServer(Options{ConfigPath: path})
@@ -457,6 +515,44 @@ func TestAdminWriteAllowsSameOriginReferer(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/config/validate", strings.NewReader(`{"backends":[{"id":"b1","server":"https://openlist.example.com"}],"subs":[]}`))
 	req.Header.Set("Referer", "http://example.com/admin/")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminWriteRejectsSecFetchCrossSite(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/config/validate", strings.NewReader(`{"backends":[],"subs":[]}`))
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminWriteAllowsSecFetchSameOrigin(t *testing.T) {
+	path := writeAdminConfig(t, testJSONConfig("old-secret"))
+	t.Setenv(envAdminCode, "123456789012")
+	server, err := NewServer(Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAdmin(t, server, "123456789012")
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/admin/config/validate", strings.NewReader(`{"backends":[{"id":"b1","server":"https://openlist.example.com"}],"subs":[]}`))
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
