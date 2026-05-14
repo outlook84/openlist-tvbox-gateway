@@ -1,7 +1,7 @@
 FROM alpine:latest AS certs
 RUN apk add --no-cache ca-certificates
 
-FROM busybox:1.37
+FROM tianon/toybox:0.8.13
 
 ARG TARGETPLATFORM
 COPY ${TARGETPLATFORM}/openlist-tvbox /usr/bin/openlist-tvbox
